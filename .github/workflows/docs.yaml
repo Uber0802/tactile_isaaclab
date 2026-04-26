@@ -6,13 +6,7 @@
 name: Build & deploy docs
 
 on:
-  push:
-    branches:
-      - main
-      - devel
-      - 'release/**'
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

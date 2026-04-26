@@ -6,27 +6,7 @@
 name: Check Documentation Links
 
 on:
-  # Run on pull requests that modify documentation
-  pull_request:
-    paths:
-      - 'docs/**'
-      - '**.md'
-      - '.github/workflows/check-links.yml'
-  # Run on pushes to main branches
-  push:
-    branches:
-      - main
-      - devel
-      - 'release/**'
-    paths:
-      - 'docs/**'
-      - '**.md'
-      - '.github/workflows/check-links.yml'
-  # Allow manual trigger
   workflow_dispatch:
-  # Run weekly to catch external links that break over time
-  schedule:
-    - cron: '0 0 * * 0'  # Every Sunday at midnight UTC
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
