@@ -6,11 +6,7 @@
 name: Post-Merge CI
 
 on:
-  push:
-    branches:
-      - main
-      - devel
-      - release/**
+  workflow_dispatch:
 
 # Concurrency control to prevent parallel runs
 concurrency:
