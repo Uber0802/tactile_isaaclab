@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 import copy
 import os
+import sys
 
 import numpy as np
 import torch
@@ -114,6 +115,109 @@ class ForgeEnv(FactoryEnv):
         if self._save_tactile_force_field:
             os.makedirs(self._tactile_save_dir, exist_ok=True)
 
+        # Optional Tactile-ReWiND progress reward.
+        self._init_tactile_reward()
+
+    def _init_tactile_reward(self):
+        """Optional dense reward bonus from a Tactile-ReWiND ckpt.
+
+        Activated when env var FORGE_TACTILE_REWARD_CKPT points at a .pth.
+        Knobs:
+            FORGE_TACTILE_REWARD_CKPT         (str path; empty = disabled)
+            FORGE_TACTILE_REWARD_SCALE        (float, default 1.0)
+            FORGE_TACTILE_REWARD_INSTRUCTION  (default "grasp peg and insert to another hole")
+            FORGE_TACTILE_REWARD_ROOT         (path to Tactile-ReWiND repo for sys.path)
+        """
+        self._tactile_reward_enabled = False
+        ckpt = os.getenv("FORGE_TACTILE_REWARD_CKPT", "").strip()
+        if not ckpt:
+            return
+
+        # Make Tactile-ReWiND/tools/ importable.
+        rewind_root = os.path.expanduser(os.getenv(
+            "FORGE_TACTILE_REWARD_ROOT",
+            "~/tactile_isaaclab/external/third-party/Tactile-ReWiND",
+        ))
+        if rewind_root not in sys.path:
+            sys.path.insert(0, rewind_root)
+        try:
+            from tools.tactile_model import TactileReWiNDTransformer
+        except Exception as e:
+            print(f"[TactileReward] FAILED import (rewind_root={rewind_root}): {e}")
+            return
+
+        state = torch.load(ckpt, map_location=self.device, weights_only=False)
+        cfg = state.get("args", {})
+        num_strided = cfg.get("num_strided_layers", None) or 3
+        bimanual_axis = cfg.get("bimanual_axis", None) or "height"
+        self._tactile_model = TactileReWiNDTransformer(
+            max_length=cfg.get("max_length", 16),
+            text_dim=384,
+            hidden_dim=cfg.get("hidden_dim", 512),
+            num_heads=cfg.get("num_heads", 8),
+            num_layers=cfg.get("num_layers", 4),
+            per_hand_dim=cfg.get("per_hand_dim", 384),
+            num_strided_layers=num_strided,
+            bimanual_axis=bimanual_axis,
+        ).to(self.device)
+        self._tactile_model.load_state_dict(state["model_state_dict"])
+        self._tactile_model.eval()
+        self._tactile_model_max_length = cfg.get("max_length", 16)
+
+        # Encode instruction once via MiniLM, then drop the encoder.
+        instruction = os.getenv(
+            "FORGE_TACTILE_REWARD_INSTRUCTION",
+            "grasp peg and insert to another hole",
+        )
+        from transformers import AutoTokenizer, AutoModel
+        tok = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
+        minilm = AutoModel.from_pretrained(
+            "sentence-transformers/all-MiniLM-L12-v2"
+        ).to(self.device)
+        minilm.eval()
+        with torch.no_grad():
+            enc = tok([instruction], padding=True, return_tensors="pt").to(self.device)
+            out = minilm(**enc)
+            tok_emb = out[0]
+            mask = enc["attention_mask"].unsqueeze(-1).expand(tok_emb.size()).float()
+            text_emb = (tok_emb * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
+        del minilm, tok
+        self._tactile_text_emb = text_emb.float()                 # (1, 384)
+
+        # Per-env rolling buffer: (B, T, 40, 25, 2) bimanual H-stacked, Fx/Fy.
+        self._tactile_buffer = torch.zeros(
+            self.num_envs, self._tactile_model_max_length, 40, 25, 2,
+            device=self.device, dtype=torch.float32,
+        )
+        self._tactile_reward_scale = float(
+            os.getenv("FORGE_TACTILE_REWARD_SCALE", "1.0"))
+        self._tactile_reward_enabled = True
+        print(f"[TactileReward] enabled  ckpt={ckpt}  scale={self._tactile_reward_scale}  "
+              f"instruction={instruction!r}")
+
+    def _compute_tactile_reward(self) -> torch.Tensor:
+        """(num_envs,) predicted progress as a dense reward bonus."""
+        if not getattr(self, "_tactile_reward_enabled", False):
+            return torch.zeros(self.num_envs, device=self.device)
+
+        left = self.scene.sensors["left_tactile_sensor"]
+        right = self.scene.sensors["right_tactile_sensor"]
+        nrows, ncols = left.cfg.tactile_array_size           # (20, 25)
+        l_shear = left.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
+        r_shear = right.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
+        current = torch.cat([l_shear, r_shear], dim=1).float()   # (B, 40, 25, 2)
+
+        # Roll window left, append current frame.
+        self._tactile_buffer = torch.roll(self._tactile_buffer, shifts=-1, dims=1)
+        self._tactile_buffer[:, -1] = current
+
+        # (B, T, H, W, C) -> (B, T, C, H, W) for the encoder.
+        x = self._tactile_buffer.permute(0, 1, 4, 2, 3).contiguous()
+        text = self._tactile_text_emb.expand(self.num_envs, -1)
+        with torch.no_grad():
+            progress = self._tactile_model(x, text).squeeze(-1)   # (B, T)
+        return progress[:, -1] * self._tactile_reward_scale
+
     def _get_tactile_force_tensors(self, sensor_name: str):
         """Return flattened normal/shear tactile force tensors for a registered sensor."""
         sensor = self.scene.sensors[sensor_name]
@@ -153,15 +257,26 @@ class ForgeEnv(FactoryEnv):
         shear_force = sensor.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
         return torch.cat((normal_force, shear_force), dim=-1)
 
-    def _flush_tactile_episode(self):
-        """Write the buffered target-env tactile tensors for the current episode."""
+    def _flush_tactile_episode(self, success: int = 0):
+        """Write the buffered target-env tactile tensors for the current episode.
+
+        Saved file is a dict (np.save with allow_pickle=True):
+            {"Task":     <fixed task description>,
+             "Tactile":  np.ndarray (T, H, W, C) float16,
+             "Success":  int 0 / 1}
+        Load with `np.load(path, allow_pickle=True).item()`.
+        """
         if not self._save_tactile_force_field or not self._tactile_episode_frames:
             return
 
         episode_path = os.path.join(self._tactile_save_dir, f"ep{self._tactile_saved_episode_count}.npy")
-        # Float16 keeps the per-episode .npy format simple while substantially reducing disk usage.
         episode_tensor = np.stack(self._tactile_episode_frames, axis=0).astype(np.float16, copy=False)
-        np.save(episode_path, episode_tensor, allow_pickle=False)
+        payload = {
+            "Task": "grasp peg and insert to another hole",
+            "Tactile": episode_tensor,
+            "Success": int(success),
+        }
+        np.save(episode_path, payload, allow_pickle=True)
         self._tactile_episode_frames.clear()
         self._tactile_saved_episode_count += 1
 
@@ -174,7 +289,13 @@ class ForgeEnv(FactoryEnv):
 
         # Detect episode boundary: target env just reset this step.
         if self.reset_buf[target_env_id]:
-            self._flush_tactile_episode()
+            # `ep_succeeded[target_env_id]` reflects the just-finished episode's
+            # outcome (set during the step's success check, before reset).
+            success = (
+                int(self.ep_succeeded[target_env_id].item())
+                if hasattr(self, "ep_succeeded") else 0
+            )
+            self._flush_tactile_episode(success=success)
             self._tactile_step_in_episode = 0
 
         # Respect save interval.
@@ -430,6 +551,10 @@ class ForgeEnv(FactoryEnv):
             "contact_penalty": -self.cfg_task.contact_penalty_scale,
             "success_pred_error": -self.success_pred_scale,
         }
+        if getattr(self, "_tactile_reward_enabled", False):
+            rew_dict["tactile_progress"] = self._compute_tactile_reward()
+            # `_tactile_reward_scale` already baked in inside the helper.
+            rew_scales["tactile_progress"] = 1.0
         for rew_name, rew in rew_dict.items():
             rew_buf += rew_dict[rew_name] * rew_scales[rew_name]
 
@@ -507,6 +632,9 @@ class ForgeEnv(FactoryEnv):
         # Reset success pred metrics.
         for thresh in [0.5, 0.6, 0.7, 0.8, 0.9]:
             self.first_pred_success_tx[thresh][env_ids] = 0
+        # Clear tactile reward buffer for envs that just reset.
+        if getattr(self, "_tactile_reward_enabled", False):
+            self._tactile_buffer[env_ids] = 0
 
     def _log_forge_metrics(self, rew_dict, policy_success_pred):
         """Log metrics to evaluate success prediction performance."""
