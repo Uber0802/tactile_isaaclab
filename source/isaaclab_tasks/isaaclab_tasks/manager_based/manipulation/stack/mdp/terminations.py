@@ -100,3 +100,19 @@ def cubes_stacked(
             raise ValueError("No gripper_joint_names found in environment config")
 
     return stacked
+
+def root_horizontal_displacement_exceeded(
+    env: ManagerBasedRLEnv,
+    max_displacement: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
+) -> torch.Tensor:
+    """Terminate when the asset's XY displacement from its default pose exceeds ``max_displacement``."""
+
+    asset: RigidObject = env.scene[asset_cfg.name]
+    env_origins = env.scene.env_origins[:, :2]
+    current_xy = asset.data.root_pos_w[:, :2] - env_origins
+    # current_xy = asset.data.root_pos_w[:, :2]
+    default_xy = asset.data.default_root_state[:, :2]
+    displacement = torch.linalg.vector_norm(current_xy - default_xy, dim=1)
+    # import ipdb; ipdb.set_trace()
+    return displacement > max_displacement

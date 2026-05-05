@@ -4,11 +4,11 @@ FORGE_TACTILE_REWARD_CKPT=/mnt/tank/uber/Tactile-Reward/checkpoints_isaaclab_bal
 FORGE_TACTILE_REWARD_SCALE=1.0 \
 FORGE_TACTILE_REWARD_INSTRUCTION="grasp peg and insert to another hole" \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
-    --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
-    --num_envs 128 \
+    --task Isaac-Stack-Cube-Franka-v0 \
+    --num_envs 4096 \
     --max_iterations 10000 \
     --enable_cameras \
     --track \
-    --wandb-entity b11902127-ntu \
+    --wandb-entity b06902045-national-taiwan-university \
     --wandb-project-name tactile-rewind \
-    --wandb-name Peg_In_2Hole_with_tactile_reward
+    --wandb-name Stack_with_tactile_reward

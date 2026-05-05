@@ -11,6 +11,7 @@ from isaaclab.devices.openxr import XrCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
+from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
@@ -138,6 +139,90 @@ class ObservationsCfg:
     rgb_camera: RGBCameraPolicyCfg = RGBCameraPolicyCfg()
     subtask_terms: SubtaskCfg = SubtaskCfg()
 
+@configclass
+class RewardsCfg:
+    """Reward terms for stacking."""
+
+    ee_to_blue_cube = RewTerm(
+        func=mdp.ee_to_cube_distance_reward,
+        params={
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "cube_cfg": SceneEntityCfg("cube_1"),
+            "max_distance": 0.25,
+            "max_reward": 1.0,
+        },
+        weight=0.5,
+    )
+
+    blue_cube_z_reward_exp = RewTerm(
+        func=mdp.cube_z_reward_exp,
+        params={
+            "cube_1_cfg": SceneEntityCfg("cube_1"),
+        },
+        weight=1.0,
+    )
+
+    blue_cube_xy_precision = RewTerm(
+        func=mdp.cube_precision_xy_reward,
+        params={
+            "cube_1_cfg": SceneEntityCfg("cube_1"),
+            "cube_2_cfg": SceneEntityCfg("cube_2"),
+            "stack_height_offset": 0.0468,
+            "height_tolerance": 0.005,
+            "max_xy_distance": 0.16,
+            "max_reward": 0.1,
+        },
+        weight=1.0,
+    )
+
+    blue_cube_xy_precision_exp = RewTerm(
+        func=mdp.cube_precision_xy_reward_exp,
+        params={
+            "cube_1_cfg": SceneEntityCfg("cube_1"),
+            "cube_2_cfg": SceneEntityCfg("cube_2"),
+            "stack_height_offset": 0.0468,
+            "height_tolerance": 0.005,
+            "distance_offset": 0.1,
+            "decay_rate": 30.0,
+        },
+        weight=1.0,
+    )
+
+    red_cube_home_penalty = RewTerm(
+        func=mdp.cube_original_xy_penalty,
+        params={
+            "cube_cfg": SceneEntityCfg("cube_2"),
+            "cube_1_cfg": SceneEntityCfg("cube_1"),
+            "cube_2_cfg": SceneEntityCfg("cube_2"),
+            "stack_height_offset": 0.0468,
+            "height_tolerance": 0.005,
+            "penalty_scale": 5.0,
+        },
+        weight=-1.0,
+    )
+
+    wrist_posture_penalty = RewTerm(
+        func=mdp.joint_deviation_l1,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["panda_joint5", "panda_joint6", "panda_joint7"]),
+        },
+        weight=-0.1,
+    )
+
+    stack_success = RewTerm(
+        func=mdp.cubes_stacked,
+        params={
+            "robot_cfg": SceneEntityCfg("robot"),
+            "cube_1_cfg": SceneEntityCfg("cube_1"),
+            "cube_2_cfg": SceneEntityCfg("cube_2"),
+        },
+        weight=10.0,
+    )
+
+    # # Small per-step penalties to discourage waiting or issuing large actions.
+    time_penalty = RewTerm(func=mdp.is_alive, weight=-0.002)
+    action_penalty = RewTerm(func=mdp.action_l2, weight=-0.001)
+    rewind_tactile_reward = RewTerm(func=mdp.rewind_tactile_reward, weight=0.2)
 
 @configclass
 class TerminationsCfg:
@@ -157,7 +242,22 @@ class TerminationsCfg:
         func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("cube_3")}
     )
 
-    success = DoneTerm(func=mdp.cubes_stacked)
+    cube_1_out_of_bounds = DoneTerm(
+        func=mdp.root_horizontal_displacement_exceeded,
+        params={"max_displacement": 0.4, "asset_cfg": SceneEntityCfg("cube_1")},
+    )
+
+    cube_2_out_of_bounds = DoneTerm(
+        func=mdp.root_horizontal_displacement_exceeded,
+        params={"max_displacement": 0.4, "asset_cfg": SceneEntityCfg("cube_2")},
+    )
+
+    cube_3_out_of_bounds = DoneTerm(
+        func=mdp.root_horizontal_displacement_exceeded,
+        params={"max_displacement": 0.4, "asset_cfg": SceneEntityCfg("cube_3")},
+    )
+
+    # success = DoneTerm(func=mdp.cubes_stacked)
 
 
 @configclass
@@ -172,9 +272,14 @@ class StackEnvCfg(ManagerBasedRLEnvCfg):
     # MDP settings
     terminations: TerminationsCfg = TerminationsCfg()
 
+    # reward logging
+    log_reward_shaping: bool = True
+    reward_log_path: str | None = "reward_shaping.txt"
+    reward_log_env_idx: int = 135
+
     # Unused managers
     commands = None
-    rewards = None
+    rewards: RewardsCfg = RewardsCfg()
     events = None
     curriculum = None
 
@@ -187,13 +292,17 @@ class StackEnvCfg(ManagerBasedRLEnvCfg):
         """Post initialization."""
         # general settings
         self.decimation = 5
-        self.episode_length_s = 30.0
+        self.episode_length_s = 10.0
         # simulation settings
         self.sim.dt = 0.01  # 100Hz
-        self.sim.render_interval = 2
+        self.sim.render_interval = 5
 
         self.sim.physx.bounce_threshold_velocity = 0.2
         self.sim.physx.bounce_threshold_velocity = 0.01
         self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
         self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
         self.sim.physx.friction_correlation_distance = 0.00625
+
+        self.observations.rgb_camera = None
+        self.observations.subtask_terms = None
+        self.observations.policy.concatenate_terms = True
