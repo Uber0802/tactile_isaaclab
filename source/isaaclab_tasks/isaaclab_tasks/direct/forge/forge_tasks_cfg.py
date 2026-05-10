@@ -34,6 +34,13 @@ class ForgePegInsert(PegInsert, ForgeTask):
 @configclass
 class ForgeGearMesh(GearMesh, ForgeTask):
     contact_penalty_scale: float = 0.05
+    # The GelSight fingertip TCP sits differently from the stock Franka fingerpad TCP.
+    # Lift the start pose and widen XY noise so the hand has clearance above the gear.
+    hand_init_pos: list = [0.0, 0.0, 0.07]
+    hand_init_pos_noise: list = [0.1, 0.1, 0.02]
+    hand_init_orn_noise: list = [0.0, 0.0, 0.4]
+    # Gear base sits on the table — only x/y position should be randomized, not z.
+    fixed_asset_init_pos_noise: list = [0.05, 0.05, 0.0]
 
 
 @configclass
