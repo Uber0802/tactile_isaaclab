@@ -616,10 +616,20 @@ class FactoryEnv(DirectRLEnv):
             held_asset_relative_pos[:, 0] += gear_base_offset[0]
             held_asset_relative_pos[:, 2] += gear_base_offset[2]
             held_asset_relative_pos[:, 2] += self.cfg_task.held_asset_cfg.height / 2.0 * 1.1
+            if getattr(self, "_use_tip_tcp", False):
+                # GelSight tips extend past the stock Franka fingerpad geometry; pull the
+                # gear back so it sits between the elastomer pads instead of below them.
+                held_asset_relative_pos[:, 2] -= 0.008
         elif self.cfg_task.name == "nut_thread":
             held_asset_relative_pos = factory_utils.get_held_base_pos_local(
                 self.cfg_task.name, self.cfg_task.fixed_asset_cfg, self.num_envs, self.device
             )
+            if getattr(self, "_use_tip_tcp", False):
+                # Match peg_insert / gear_mesh: GelSight elastomer pads extend ~0.008 m
+                # past the stock Franka fingertip, so the nut needs to be pulled up that
+                # much to sit between the pads instead of below them. Without this the
+                # gripper closes on empty air and the nut drops the moment gravity is on.
+                held_asset_relative_pos[:, 2] -= 0.008
         else:
             raise NotImplementedError("Task not implemented")
 

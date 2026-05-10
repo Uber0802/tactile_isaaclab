@@ -27,6 +27,8 @@ PEG_INSERT_ROBOT_USD_PATH = (
 )
 
 OBS_DIM_CFG.update({"force_threshold": 1, "ft_force": 3})
+# Register absolute fixed/held positions for actor obs (already in STATE_DIM_CFG defaults).
+OBS_DIM_CFG.update({"fixed_pos": 3, "held_pos": 3})
 
 STATE_DIM_CFG.update({"force_threshold": 1, "ft_force": 3})
 OBS_DIM_CFG.update(
@@ -208,7 +210,7 @@ class ForgeTaskPegInsertCfg(ForgeEnvCfg):
         tangential_stiffness=0.1,
         camera_cfg=TiledCameraCfg(
             prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_tip_link/cam",
-            update_period=1 / 60,
+            update_period=1 / 15,  # match VisuoTactileSensor update_period — was 1/60 (4× wasted renders)
             height=GELSIGHT_R15_CFG.image_height,
             width=GELSIGHT_R15_CFG.image_width,
             data_types=["distance_to_image_plane"],
@@ -229,7 +231,7 @@ class ForgeTaskPegInsertCfg(ForgeEnvCfg):
         tangential_stiffness=0.1,
         camera_cfg=TiledCameraCfg(
             prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_tip_link/cam",
-            update_period=1 / 60,
+            update_period=1 / 15,  # match VisuoTactileSensor update_period — was 1/60 (4× wasted renders)
             height=GELSIGHT_R15_CFG.image_height,
             width=GELSIGHT_R15_CFG.image_width,
             data_types=["distance_to_image_plane"],
@@ -265,9 +267,180 @@ class ForgeTaskGearMeshCfg(ForgeEnvCfg):
     task = ForgeGearMesh()
     episode_length_s = 20.0
 
+    left_tactile_sensor: VisuoTactileSensorCfg = VisuoTactileSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_link/tactile_sensor",
+        update_period=1 / 15,
+        render_cfg=GELSIGHT_R15_CFG,
+        enable_camera_tactile=True,
+        enable_force_field=True,
+        tactile_array_size=(20, 25),
+        tactile_margin=0.003,
+        contact_object_prim_path_expr="{ENV_REGEX_NS}/HeldAsset",
+        normal_contact_stiffness=1.0,
+        friction_coefficient=2.0,
+        tangential_stiffness=0.1,
+        camera_cfg=TiledCameraCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_tip_link/cam",
+            update_period=1 / 15,  # match VisuoTactileSensor update_period — was 1/60 (4× wasted renders)
+            height=GELSIGHT_R15_CFG.image_height,
+            width=GELSIGHT_R15_CFG.image_width,
+            data_types=["distance_to_image_plane"],
+            spawn=None,
+        ),
+    )
+    right_tactile_sensor: VisuoTactileSensorCfg = VisuoTactileSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_link/tactile_sensor",
+        update_period=1 / 15,
+        render_cfg=GELSIGHT_R15_CFG,
+        enable_camera_tactile=True,
+        enable_force_field=True,
+        tactile_array_size=(20, 25),
+        tactile_margin=0.003,
+        contact_object_prim_path_expr="{ENV_REGEX_NS}/HeldAsset",
+        normal_contact_stiffness=1.0,
+        friction_coefficient=2.0,
+        tangential_stiffness=0.1,
+        camera_cfg=TiledCameraCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_tip_link/cam",
+            update_period=1 / 15,  # match VisuoTactileSensor update_period — was 1/60 (4× wasted renders)
+            height=GELSIGHT_R15_CFG.image_height,
+            width=GELSIGHT_R15_CFG.image_width,
+            data_types=["distance_to_image_plane"],
+            spawn=None,
+        ),
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.sim.render_interval = self.decimation
+        self.scene.replicate_physics = False
+        self.scene.clone_in_fabric = False
+        self.robot = self.robot.replace(
+            spawn=sim_utils.UsdFileWithCompliantContactCfg(
+                usd_path=PEG_INSERT_ROBOT_USD_PATH,
+                activate_contact_sensors=True,
+                rigid_props=self.robot.spawn.rigid_props,
+                articulation_props=self.robot.spawn.articulation_props,
+                collision_props=self.robot.spawn.collision_props,
+                compliant_contact_stiffness=1000.0,
+                compliant_contact_damping=100.0,
+                physics_material_prim_path=[
+                    "left_elastomer_link",
+                    "right_elastomer_link",
+                ],
+            )
+        )
+
 
 @configclass
 class ForgeTaskNutThreadCfg(ForgeEnvCfg):
     task_name = "nut_thread"
     task = ForgeNutThread()
     episode_length_s = 30.0
+    # NutThread baseline A: drop F/T sensing from actor + critic, expose absolute
+    # bolt (`fixed_pos`) and nut (`held_pos`) positions to the actor for the
+    # randomized-init variant.
+    obs_order: list = [
+        "fingertip_pos_rel_fixed",
+        "fingertip_quat",
+        "ee_linvel",
+        "ee_angvel",
+        # "ft_force",        # commented for no-tactile / no-F/T baseline
+        # "force_threshold", # commented for no-tactile / no-F/T baseline
+        "fixed_pos",
+        "held_pos",
+    ]
+    state_order: list = [
+        "fingertip_pos",
+        "fingertip_quat",
+        "ee_linvel",
+        "ee_angvel",
+        "joint_pos",
+        "held_pos",
+        "held_pos_rel_fixed",
+        "held_quat",
+        "fixed_pos",
+        "fixed_quat",
+        "task_prop_gains",
+        "ema_factor",
+        # "ft_force",        # commented for no-F/T baseline
+        "pos_threshold",
+        "rot_threshold",
+        # "force_threshold", # commented for no-F/T baseline
+    ]
+
+
+    left_tactile_sensor: VisuoTactileSensorCfg = VisuoTactileSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_link/tactile_sensor",
+        update_period=1 / 15,
+        render_cfg=GELSIGHT_R15_CFG,
+        enable_camera_tactile=True,
+        enable_force_field=True,
+        tactile_array_size=(20, 25),
+        tactile_margin=0.003,
+        contact_object_prim_path_expr="{ENV_REGEX_NS}/HeldAsset",
+        normal_contact_stiffness=1.0,
+        friction_coefficient=2.0,
+        tangential_stiffness=0.1,
+        camera_cfg=TiledCameraCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_tip_link/cam",
+            update_period=1 / 15,  # match VisuoTactileSensor update_period — was 1/60 (4× wasted renders)
+            height=GELSIGHT_R15_CFG.image_height,
+            width=GELSIGHT_R15_CFG.image_width,
+            data_types=["distance_to_image_plane"],
+            spawn=None,
+        ),
+    )
+    right_tactile_sensor: VisuoTactileSensorCfg = VisuoTactileSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_link/tactile_sensor",
+        update_period=1 / 15,
+        render_cfg=GELSIGHT_R15_CFG,
+        enable_camera_tactile=True,
+        enable_force_field=True,
+        tactile_array_size=(20, 25),
+        tactile_margin=0.003,
+        contact_object_prim_path_expr="{ENV_REGEX_NS}/HeldAsset",
+        normal_contact_stiffness=1.0,
+        friction_coefficient=2.0,
+        tangential_stiffness=0.1,
+        camera_cfg=TiledCameraCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_tip_link/cam",
+            update_period=1 / 15,  # match VisuoTactileSensor update_period — was 1/60 (4× wasted renders)
+            height=GELSIGHT_R15_CFG.image_height,
+            width=GELSIGHT_R15_CFG.image_width,
+            data_types=["distance_to_image_plane"],
+            spawn=None,
+        ),
+    )
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.sim.render_interval = self.decimation
+        self.scene.replicate_physics = False
+        self.scene.clone_in_fabric = False
+        # Bump hand_init_pos[2] from the default 1.5 cm to 3.5 cm (matching GearMesh).
+        # The franka_gelsight fingertip is thicker than the stock Franka fingertip,
+        # so 1.5 cm clearance above the bolt tip puts the gelsight tip inside / below
+        # the bolt — IK fails to converge, falls back to default pose, and the nut
+        # never lands in the gripper.
+        self.task.hand_init_pos = [0.0, 0.0, 0.035]
+        # Bolt only randomizes in XY (no z noise) so the bolt always sits on the table.
+        # Nut (in gripper) gets a wider XY range so the policy sees more variation in
+        # gripper-relative-to-bolt offsets without ending up too far from the bolt.
+        self.task.fixed_asset_init_pos_noise = [0.05, 0.05, 0.0]
+        self.task.hand_init_pos_noise = [0.04, 0.04, 0.02]
+        self.robot = self.robot.replace(
+            spawn=sim_utils.UsdFileWithCompliantContactCfg(
+                usd_path=PEG_INSERT_ROBOT_USD_PATH,
+                activate_contact_sensors=True,
+                rigid_props=self.robot.spawn.rigid_props,
+                articulation_props=self.robot.spawn.articulation_props,
+                collision_props=self.robot.spawn.collision_props,
+                compliant_contact_stiffness=1000.0,
+                compliant_contact_damping=100.0,
+                physics_material_prim_path=[
+                    "left_elastomer_link",
+                    "right_elastomer_link",
+                ],
+            )
+        )

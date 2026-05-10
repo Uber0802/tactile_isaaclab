@@ -417,6 +417,11 @@ class ForgeEnv(FactoryEnv):
                 "force_threshold": self.contact_penalty_thresholds[:, None],
                 "ft_force": self.noisy_force,
                 "prev_actions": prev_actions,
+                # Absolute positions of bolt (fixed_asset) and nut (held_asset).
+                # Must be in obs_dict (not just state_dict) so tasks that include
+                # them in `obs_order` — e.g. NutThread baseline — can see them.
+                "fixed_pos": self.fixed_pos,
+                "held_pos": self.held_pos,
             }
         )
 
