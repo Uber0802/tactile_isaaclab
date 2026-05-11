@@ -270,7 +270,9 @@ class VisuoTactileSensor(SensorBase):
 
         # Initialize camera buffers
         self._data.tactile_rgb_image = torch.zeros(
-            (self._num_envs, self.cfg.camera_cfg.height, self.cfg.camera_cfg.width, 3), device=self._device
+            (self._num_envs, self.cfg.camera_cfg.height, self.cfg.camera_cfg.width, 3),
+            device=self._device,
+            dtype=torch.uint8,
         )
         self._data.tactile_depth_image = torch.zeros(
             (self._num_envs, self.cfg.camera_cfg.height, self.cfg.camera_cfg.width, 1), device=self._device
@@ -650,13 +652,16 @@ class VisuoTactileSensor(SensorBase):
             quat_w: Elastomer quaternions in world frame. Shape: (num_envs, 4)
         """
         num_pts = self.num_tactile_points
+        batch_size = quat_w.shape[0]
 
         quat_expanded = quat_w.unsqueeze(1).expand(-1, num_pts, -1)
         pos_expanded = pos_w.unsqueeze(1).expand(-1, num_pts, -1)
+        tactile_pos_local_expanded = self._tactile_pos_local.unsqueeze(0).expand(batch_size, -1, -1)
+        tactile_quat_local_expanded = self._tactile_quat_local.unsqueeze(0).expand(batch_size, -1, -1)
 
         # Apply transformation
-        tactile_pos_w = math_utils.quat_apply(quat_expanded, self._tactile_pos_expanded) + pos_expanded
-        tactile_quat_w = math_utils.quat_mul(quat_expanded, self._tactile_quat_expanded)
+        tactile_pos_w = math_utils.quat_apply(quat_expanded, tactile_pos_local_expanded) + pos_expanded
+        tactile_quat_w = math_utils.quat_mul(quat_expanded, tactile_quat_local_expanded)
 
         # Store in data
         self._data.tactile_points_pos_w = tactile_pos_w
@@ -704,10 +709,11 @@ class VisuoTactileSensor(SensorBase):
             Tactile point velocities in world frame. Shape: (num_envs, num_points, 3)
         """
         num_pts = self.num_tactile_points
+        batch_size = quat_world.shape[0]
 
         # Pre-expand all required tensors once
         quat_expanded = quat_world.unsqueeze(1).expand(-1, num_pts, 4)
-        tactile_pos_expanded = self._tactile_pos_expanded
+        tactile_pos_expanded = self._tactile_pos_local.unsqueeze(0).expand(batch_size, -1, -1)
 
         # Transform local positions to world frame relative vectors
         tactile_pos_world_relative = math_utils.quat_apply(quat_expanded, tactile_pos_expanded)

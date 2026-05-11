@@ -1,6 +1,5 @@
 FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
 FORGE_TACTILE_SAVE_DIR=./tactile_dataset/data_1 \
-FORGE_TACTILE_REWARD_CKPT=/mnt/tank/uber/Tactile-Reward/checkpoints_isaaclab_balanced/isaaclab_overfit_epoch99.pth \
 FORGE_TACTILE_REWARD_SCALE=1.0 \
 FORGE_TACTILE_REWARD_INSTRUCTION="grasp peg and insert to another hole" \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \

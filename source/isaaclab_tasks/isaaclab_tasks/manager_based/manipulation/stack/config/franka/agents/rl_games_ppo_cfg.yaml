@@ -28,8 +28,8 @@ params:
           name: default
         sigma_init:
           name: const_initializer
-          val: 0
-        fixed_sigma: True
+          val: 0.3
+        fixed_sigma: False
     mlp:
       units: [512, 128, 64]
       activation: elu
@@ -57,7 +57,7 @@ params:
     device_name: 'cuda:0'
     multi_gpu: False
     ppo: True
-    mixed_precision: True
+    mixed_precision: False
     normalize_input: True
     normalize_value: True
     value_bootstrap: True
@@ -70,7 +70,7 @@ params:
     learning_rate: 5.0e-5
     lr_schedule: fixed
     schedule_type: standard
-    kl_threshold: 0.004
+    kl_threshold: 0.008
     score_to_win: 200000000
     max_epochs: 200000
     save_best_after: 5
@@ -83,7 +83,7 @@ params:
     horizon_length: 128
     minibatch_size: 2048  # 16 recurrent sequences per minibatch with seq_length=128
     mini_epochs: 3
-    critic_coef: 2
+    critic_coef: 0.5
     clip_value: True
     seq_length: 128
     bounds_loss_coef: 0.0001

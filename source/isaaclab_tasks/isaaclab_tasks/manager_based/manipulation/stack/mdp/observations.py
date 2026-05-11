@@ -532,3 +532,27 @@ def ee_frame_pose_in_base_frame(
         return ee_quat_in_base
     else:
         return torch.cat((ee_pos_in_base, ee_quat_in_base), dim=1)
+
+
+def tactile_normal_force(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """The tactile normal force of the specified sensor."""
+    sensor = env.scene[sensor_cfg.name]
+    if hasattr(sensor, "get_initial_render") and getattr(sensor, "_nominal_tactile", None) is None:
+        H, W = sensor.cfg.tactile_array_size
+        return torch.zeros(env.num_envs, H * W, dtype=torch.float32, device=env.device)
+    return sensor.data.tactile_normal_force
+
+
+def tactile_shear_force(
+    env: ManagerBasedRLEnv,
+    sensor_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    """The tactile shear force of the specified sensor."""
+    sensor = env.scene[sensor_cfg.name]
+    if hasattr(sensor, "get_initial_render") and getattr(sensor, "_nominal_tactile", None) is None:
+        H, W = sensor.cfg.tactile_array_size
+        return torch.zeros(env.num_envs, H * W * 2, dtype=torch.float32, device=env.device)
+    return sensor.data.tactile_shear_force.reshape(env.num_envs, -1)

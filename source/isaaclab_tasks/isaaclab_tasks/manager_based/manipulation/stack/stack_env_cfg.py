@@ -222,7 +222,7 @@ class RewardsCfg:
     # # Small per-step penalties to discourage waiting or issuing large actions.
     time_penalty = RewTerm(func=mdp.is_alive, weight=-0.002)
     action_penalty = RewTerm(func=mdp.action_l2, weight=-0.001)
-    rewind_tactile_reward = RewTerm(func=mdp.rewind_tactile_reward, weight=0.2)
+    # rewind_tactile_reward = RewTerm(func=mdp.rewind_tactile_reward, weight=0.2)
 
 @configclass
 class TerminationsCfg:
