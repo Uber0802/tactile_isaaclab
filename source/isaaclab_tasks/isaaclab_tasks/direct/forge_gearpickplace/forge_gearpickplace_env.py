@@ -214,20 +214,18 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
             left_normal_force, left_shear_force = self._get_tactile_force_tensors("left_tactile_sensor")
             right_normal_force, right_shear_force = self._get_tactile_force_tensors("right_tactile_sensor")
             self._save_env0_tactile_force_field()
-            obs_dict.update(
-                {
-                    "left_tactile_normal_force": left_normal_force,
-                    "right_tactile_normal_force": right_normal_force,
-                }
-            )
-            state_dict.update(
-                {
-                    "left_tactile_normal_force": left_normal_force,
-                    "left_tactile_shear_force": left_shear_force,
-                    "right_tactile_normal_force": right_normal_force,
-                    "right_tactile_shear_force": right_shear_force,
-                }
-            )
+            # Populate the same 4 tactile entries into both dicts. Whether they
+            # actually feed into the actor / critic is decided by `obs_order` /
+            # `state_order` (see `apply_baseline` in env_cfg). Baseline A does
+            # not list any of these, so its actor vector stays unchanged.
+            tactile_dict = {
+                "left_tactile_normal_force": left_normal_force,
+                "left_tactile_shear_force": left_shear_force,
+                "right_tactile_normal_force": right_normal_force,
+                "right_tactile_shear_force": right_shear_force,
+            }
+            obs_dict.update(tactile_dict)
+            state_dict.update(tactile_dict)
 
         noisy_fixed_pos = self.fixed_pos_obs_frame + self.init_fixed_pos_obs_noise
         prev_actions = self.actions.clone()

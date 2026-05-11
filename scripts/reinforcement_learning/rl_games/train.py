@@ -43,6 +43,16 @@ parser.add_argument(
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
 parser.add_argument(
+    "--baseline",
+    type=str,
+    default="A",
+    help=(
+        "Baseline variant (A, B, C, ...). Each task's env_cfg can implement "
+        "apply_baseline(self, baseline_id) to swap obs_order / state_order / etc. "
+        "Default 'A' is a no-op so existing run scripts keep their original frozen behavior."
+    ),
+)
+parser.add_argument(
     "--ray-proc-id", "-rid", type=int, default=None, help="Automatically configured by Ray integration, otherwise None."
 )
 # append AppLauncher cli args
@@ -101,6 +111,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     # override configurations with non-hydra CLI arguments
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    if hasattr(env_cfg, "apply_baseline"):
+        env_cfg.apply_baseline(args_cli.baseline)
     # check for invalid combination of CPU device with distributed training
     if args_cli.distributed and args_cli.device is not None and "cpu" in args_cli.device:
         raise ValueError(
