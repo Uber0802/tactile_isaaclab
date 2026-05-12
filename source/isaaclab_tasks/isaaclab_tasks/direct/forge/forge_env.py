@@ -118,6 +118,11 @@ class ForgeEnv(FactoryEnv):
         # Optional Tactile-ReWiND progress reward.
         self._init_tactile_reward()
 
+        # Optional Tactile-ReWiND CNN encoder for Baseline B2 (frozen 768-dim
+        # tactile embedding fed to the policy in place of the raw 3000-dim
+        # force fields). Independent from the reward model above.
+        self._init_tactile_encoder()
+
     def _init_tactile_reward(self):
         """Optional dense reward bonus from a Tactile-ReWiND ckpt.
 
@@ -217,6 +222,97 @@ class ForgeEnv(FactoryEnv):
         with torch.no_grad():
             progress = self._tactile_model(x, text).squeeze(-1)   # (B, T)
         return progress[:, -1] * self._tactile_reward_scale
+
+    # ----------------------------------------------------------------------
+    # Tactile-ReWiND CNN encoder used by Baseline B2 (frozen feature extractor).
+    # Reads only the `encoder.*` submodule from a Tactile-ReWiND ckpt,
+    # exposes a per-step 768-dim embedding via `_compute_tactile_embedding()`.
+    # ----------------------------------------------------------------------
+    def _init_tactile_encoder(self):
+        """Optional 768-dim tactile embedding for Baseline B2.
+
+        Activated when env var FORGE_TACTILE_ENCODER_CKPT points at a .pth.
+        Loads only the `TactileCNNEncoder` submodule (encoder.*) from the same
+        ckpt format used by `_init_tactile_reward`, freezes it, and runs it
+        once per env-step on the current (B, 2, 40, 25) shear-only frame.
+        Knobs:
+            FORGE_TACTILE_ENCODER_CKPT  (str path; empty = disabled)
+            FORGE_TACTILE_ENCODER_ROOT  (path to Tactile-ReWiND repo for sys.path)
+        """
+        self._tactile_encoder_enabled = False
+        ckpt = os.getenv("FORGE_TACTILE_ENCODER_CKPT", "").strip()
+        if not ckpt:
+            return
+
+        rewind_root = os.path.expanduser(os.getenv(
+            "FORGE_TACTILE_ENCODER_ROOT",
+            "~/tactile_isaaclab/external/third-party/Tactile-ReWiND",
+        ))
+        if rewind_root not in sys.path:
+            sys.path.insert(0, rewind_root)
+        try:
+            from tools.tactile_model import TactileCNNEncoder
+        except Exception as e:
+            print(f"[TactileEncoder] FAILED import (rewind_root={rewind_root}): {e}")
+            return
+
+        state = torch.load(ckpt, map_location=self.device, weights_only=False)
+        cfg = state.get("args", {})
+        num_strided = cfg.get("num_strided_layers", None) or 3
+        bimanual_axis = cfg.get("bimanual_axis", None) or "height"
+        per_hand_dim = cfg.get("per_hand_dim", 384)
+        output_dim = 2 * per_hand_dim   # matches TactileReWiNDTransformer.video_dim
+
+        encoder = TactileCNNEncoder(
+            in_channels=2,                 # shear-only (Fx, Fy)
+            per_hand_dim=per_hand_dim,
+            output_dim=output_dim,
+            num_strided_layers=num_strided,
+            bimanual_axis=bimanual_axis,
+        ).to(self.device)
+
+        # Filter the full ckpt state_dict down to just the encoder submodule.
+        full_sd = state["model_state_dict"]
+        enc_sd = {
+            k[len("encoder."):]: v for k, v in full_sd.items()
+            if k.startswith("encoder.")
+        }
+        missing, unexpected = encoder.load_state_dict(enc_sd, strict=False)
+        if missing or unexpected:
+            print(f"[TactileEncoder] load_state_dict missing={missing} unexpected={unexpected}")
+        encoder.eval()
+        for p in encoder.parameters():
+            p.requires_grad_(False)
+
+        self._tactile_encoder = encoder
+        self._tactile_encoder_dim = output_dim
+        self._tactile_encoder_enabled = True
+        print(f"[TactileEncoder] enabled  ckpt={ckpt}  out_dim={output_dim}  "
+              f"axis={bimanual_axis}  strided={num_strided}")
+
+    def _compute_tactile_embedding(self) -> torch.Tensor:
+        """(num_envs, 768) per-step embedding of the current shear frame.
+
+        Mirrors the layout used at ReWiND training: shear-only, bimanual stacked
+        on the H axis -> (B, 2, 40, 25), then passed through the frozen CNN.
+        Returns zeros if the encoder is not enabled (so callers can populate
+        the obs dict unconditionally).
+        """
+        if not getattr(self, "_tactile_encoder_enabled", False):
+            return torch.zeros(
+                self.num_envs,
+                getattr(self, "_tactile_encoder_dim", 768),
+                device=self.device,
+            )
+        left = self.scene.sensors["left_tactile_sensor"]
+        right = self.scene.sensors["right_tactile_sensor"]
+        nrows, ncols = left.cfg.tactile_array_size           # (20, 25)
+        l_shear = left.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
+        r_shear = right.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
+        # (B, 40, 25, 2) -> (B, 2, 40, 25) for the CNN.
+        frame = torch.cat([l_shear, r_shear], dim=1).float().permute(0, 3, 1, 2).contiguous()
+        with torch.no_grad():
+            return self._tactile_encoder(frame)              # (B, 768)
 
     def _get_tactile_force_tensors(self, sensor_name: str):
         """Return flattened normal/shear tactile force tensors for a registered sensor."""

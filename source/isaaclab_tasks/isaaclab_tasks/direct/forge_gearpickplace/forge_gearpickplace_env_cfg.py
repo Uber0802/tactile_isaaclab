@@ -101,9 +101,13 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         if baseline == "B":
             self._apply_baseline_B()
             return
+        if baseline == "B2":
+            self._apply_baseline_B2()
+            return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskGearMeshPickPlaceCfg. "
-            f"Implemented: A (frozen), B (tactile force fields)."
+            f"Implemented: A (frozen), B (tactile force fields), "
+            f"B2 (frozen ReWiND CNN -> 768-dim embedding)."
         )
 
     def _apply_baseline_B(self) -> None:
@@ -134,3 +138,21 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         # Keep the relative order of A's existing entries; just append tactile.
         self.obs_order = list(self.obs_order) + tactile_keys
         self.state_order = list(self.state_order) + tactile_keys
+
+    def _apply_baseline_B2(self) -> None:
+        """Baseline B2: frozen ReWiND CNN encoder produces a 768-dim tactile
+        embedding (per env, per step) that replaces baseline B's 3000-dim raw
+        force-field obs. Symmetric: same embedding is appended to both actor
+        and critic.
+
+        The encoder is loaded inside `ForgeEnv._init_tactile_encoder` when
+        `FORGE_TACTILE_ENCODER_CKPT` is set. It is frozen (eval mode, no grad).
+        `forge_gearpickplace_env._get_observations` populates the
+        `tactile_embedding` key whenever the encoder is enabled.
+        """
+        embed_dim = 768  # TactileCNNEncoder output_dim = 2 * per_hand_dim (384*2)
+        OBS_DIM_CFG.update({"tactile_embedding": embed_dim})
+        STATE_DIM_CFG.update({"tactile_embedding": embed_dim})
+
+        self.obs_order = list(self.obs_order) + ["tactile_embedding"]
+        self.state_order = list(self.state_order) + ["tactile_embedding"]
