@@ -246,6 +246,12 @@ class ForgePegInsertPickPlaceEnv(ForgeEnv):
                 "right_tactile_normal_force": right_normal_force,
                 "right_tactile_shear_force": right_shear_force,
             }
+            # Baseline B2: frozen ReWiND CNN encoder -> 768-dim embedding.
+            # Only added when the encoder is loaded (env var-gated in ForgeEnv).
+            # Baseline A/B obs_order do not reference this key, so this is a no-op
+            # for them; only `_apply_baseline_B2()` lists it in obs_order/state_order.
+            if getattr(self, "_tactile_encoder_enabled", False):
+                tactile_dict["tactile_embedding"] = self._compute_tactile_embedding()
             obs_dict.update(tactile_dict)
             state_dict.update(tactile_dict)
 
