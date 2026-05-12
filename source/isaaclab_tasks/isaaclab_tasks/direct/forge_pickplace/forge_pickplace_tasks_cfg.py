@@ -15,8 +15,13 @@ from isaaclab_tasks.direct.forge.forge_tasks_cfg import ForgePegInsert
 class ForgePegInsertPickPlace(ForgePegInsert):
     """Pick-and-place variant: peg starts inside a source hole; place it in the destination hole."""
 
-    # Offset of source hole relative to destination hole (x, y, z), applied in world frame at reset.
-    source_hole_offset: list = [0.0, 0.10, 0.0]
+    # Source-hole pose relative to destination hole, sampled per env at reset.
+    # `source_hole_offset_range` is the half-range of a uniform U(-r, +r) sample on each axis
+    # (x, y, z), applied in world frame. `source_hole_min_distance` is the minimum allowed
+    # XY centre-to-centre distance; samples below it are rejected so the two hole bases
+    # never overlap.
+    source_hole_offset_range: list = [0.10, 0.10, 0.0]
+    source_hole_min_distance: float = 0.05
 
     # Gripper starts clearly above the peg top (peg sticks ~2.5 cm above the source hole),
     # leaving room for the fingers to descend and grasp.

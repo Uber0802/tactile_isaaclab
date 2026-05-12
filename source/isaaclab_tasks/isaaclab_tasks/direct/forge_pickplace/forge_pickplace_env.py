@@ -219,6 +219,69 @@ class ForgePegInsertPickPlaceEnv(ForgeEnv):
         gripper_ema = self.cfg_task.gripper_ema
         self.actions[:, 7] = gripper_ema * raw_action[:, 7] + (1 - gripper_ema) * self.actions[:, 7]
 
+    def _get_observations(self):
+        """Reimplement ForgeEnv._get_observations with held-asset pose + finger-relative
+        vectors added to the actor obs dict.
+
+        Base ForgeEnv only exposes fingertip / force info to the actor; held_pos /
+        held_quat / held_pos_rel_fixed / fingertip_pos_rel_held live only in the
+        critic state. For pick-place the policy needs `fingertip_pos_rel_held`
+        (grasp phase) and `held_pos_rel_fixed` (transport phase) directly —
+        without them the network has to reconstruct them from a chain of
+        subtractions, which is what made baseline A's grasp phase train so slowly.
+        """
+        obs_dict, state_dict = self._get_factory_obs_state_dict()
+
+        if "left_tactile_sensor" in self.scene.sensors:
+            left_normal_force, left_shear_force = self._get_tactile_force_tensors("left_tactile_sensor")
+            right_normal_force, right_shear_force = self._get_tactile_force_tensors("right_tactile_sensor")
+            self._save_env0_tactile_force_field()
+            # Populate the same 4 tactile entries into both dicts. Whether they
+            # actually feed into the actor / critic is decided by `obs_order` /
+            # `state_order` (see `apply_baseline` in env_cfg). Baseline A does
+            # not list any of these, so its actor vector stays unchanged.
+            tactile_dict = {
+                "left_tactile_normal_force": left_normal_force,
+                "left_tactile_shear_force": left_shear_force,
+                "right_tactile_normal_force": right_normal_force,
+                "right_tactile_shear_force": right_shear_force,
+            }
+            obs_dict.update(tactile_dict)
+            state_dict.update(tactile_dict)
+
+        noisy_fixed_pos = self.fixed_pos_obs_frame + self.init_fixed_pos_obs_noise
+        prev_actions = self.actions.clone()
+        prev_actions[:, 3:5] = 0.0
+
+        obs_dict.update(
+            {
+                "fingertip_pos": self.noisy_fingertip_pos,
+                "fingertip_pos_rel_fixed": self.noisy_fingertip_pos - noisy_fixed_pos,
+                "fingertip_pos_rel_held": self.noisy_fingertip_pos - self.held_pos,
+                "fingertip_quat": self.noisy_fingertip_quat,
+                "force_threshold": self.contact_penalty_thresholds[:, None],
+                "ft_force": self.noisy_force,
+                "prev_actions": prev_actions,
+                "held_pos": self.held_pos,
+                "held_pos_rel_fixed": self.held_pos - noisy_fixed_pos,
+                "held_quat": self.held_quat,
+                "fixed_pos": self.fixed_pos,
+            }
+        )
+
+        state_dict.update(
+            {
+                "ema_factor": self.ema_factor,
+                "ft_force": self.force_sensor_smooth[:, 0:3],
+                "force_threshold": self.contact_penalty_thresholds[:, None],
+                "prev_actions": prev_actions,
+            }
+        )
+
+        obs_tensors = factory_utils.collapse_obs_dict(obs_dict, self.cfg.obs_order + ["prev_actions"])
+        state_tensors = factory_utils.collapse_obs_dict(state_dict, self.cfg.state_order + ["prev_actions"])
+        return {"policy": obs_tensors, "critic": state_tensors}
+
     def _get_rewards(self):
         """Forge peg-insert reward plus pick-place shaping (approach + lift)."""
         rew_buf = super()._get_rewards()
@@ -382,10 +445,26 @@ class ForgePegInsertPickPlaceEnv(ForgeEnv):
         self._fixed_asset.write_root_velocity_to_sim(fixed_state[:, 7:], env_ids=env_ids)
         self._fixed_asset.reset()
 
-        # (1b) Place source hole at destination hole + configured offset.
-        source_offset = torch.tensor(self.cfg_task.source_hole_offset, dtype=torch.float32, device=self.device)
+        # (1b) Place source hole at a randomized offset from destination hole.
+        # Sample uniform in ±source_hole_offset_range per axis, then reject any sample whose
+        # XY centre lies within source_hole_min_distance of the destination centre so the
+        # two hole bases can't overlap.
+        offset_range = torch.tensor(
+            self.cfg_task.source_hole_offset_range, dtype=torch.float32, device=self.device
+        )
+        min_dist = float(self.cfg_task.source_hole_min_distance)
+        n_envs = len(env_ids)
+        source_offset_xyz = torch.zeros((n_envs, 3), dtype=torch.float32, device=self.device)
+        pending = torch.arange(n_envs, device=self.device)
+        while pending.numel() > 0:
+            rand_sample = 2 * (torch.rand((pending.numel(), 3), device=self.device) - 0.5)
+            candidate = rand_sample * offset_range.unsqueeze(0)
+            accepted = torch.linalg.norm(candidate[:, :2], dim=1) >= min_dist
+            source_offset_xyz[pending[accepted]] = candidate[accepted]
+            pending = pending[~accepted]
+
         source_state = self._source_fixed_asset.data.default_root_state.clone()[env_ids]
-        source_state[:, 0:3] = fixed_state[:, 0:3] + source_offset.unsqueeze(0)
+        source_state[:, 0:3] = fixed_state[:, 0:3] + source_offset_xyz
         source_state[:, 3:7] = fixed_state[:, 3:7]
         source_state[:, 7:] = 0.0
         self._source_fixed_asset.write_root_pose_to_sim(source_state[:, 0:7], env_ids=env_ids)
