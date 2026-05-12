@@ -33,9 +33,9 @@ from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
 from isaaclab_assets.robots.franka import FRANKA_PANDA_CFG, FRANKA_PANDA_HIGH_PD_CFG  # isort: skip
 
 LOCAL_PEG_INSERT_ROBOT_USD_PATH = "./franka_gelsight.usd"
-LOCAL_BLUE_BLOCK_USD  = "./assets/Props/blue_block_mesh.usd"
-LOCAL_RED_BLOCK_USD   = "./assets/Props/red_block_mesh.usd"
-LOCAL_GREEN_BLOCK_USD = "./assets/Props/green_block_mesh.usd"
+LOCAL_BLUE_BLOCK_USD  = "./assets/Props/blue_block_sdf.usd"
+LOCAL_RED_BLOCK_USD   = "./assets/Props/red_block_sdf.usd"
+LOCAL_GREEN_BLOCK_USD = "./assets/Props/green_block_sdf.usd"
 
 @configclass
 class GelsightObservationsCfg(ObservationsCfg):
@@ -43,6 +43,7 @@ class GelsightObservationsCfg(ObservationsCfg):
 
     def __post_init__(self):
         super().__post_init__()
+        '''
         self.policy.left_tactile_normal_force = ObsTerm(
             func=mdp.tactile_normal_force, params={"sensor_cfg": SceneEntityCfg("left_tactile_sensor")}
         )
@@ -55,6 +56,7 @@ class GelsightObservationsCfg(ObservationsCfg):
         self.policy.right_tactile_shear_force = ObsTerm(
             func=mdp.tactile_shear_force, params={"sensor_cfg": SceneEntityCfg("right_tactile_sensor")}
         )
+        '''
 @configclass
 class GelsightRewardsCfg(RewardsCfg):
     """Reward specifications for the Gelsight environment."""
@@ -116,7 +118,7 @@ class FrankaGelsightEnvCfg(StackEnvCfg):
         tangential_stiffness=0.1,
         camera_cfg=TiledCameraCfg(
             prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_tip_link/cam",
-            update_period=1 / 60, # TODO: Double check
+            update_period=1 / 15, # TODO: Double check
             height=GELSIGHT_R15_CFG.image_height,
             width=GELSIGHT_R15_CFG.image_width,
             data_types=["distance_to_image_plane"],
@@ -137,7 +139,7 @@ class FrankaGelsightEnvCfg(StackEnvCfg):
         tangential_stiffness=0.1,
         camera_cfg=TiledCameraCfg(
             prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_tip_link/cam",
-            update_period=1 / 60,
+            update_period=1 / 15,
             height=GELSIGHT_R15_CFG.image_height,
             width=GELSIGHT_R15_CFG.image_width,
             data_types=["distance_to_image_plane"],
@@ -217,10 +219,6 @@ class FrankaGelsightEnvCfg(StackEnvCfg):
                 usd_path=LOCAL_BLUE_BLOCK_USD,
                 scale=(1.0, 1.0, 1.0),
                 rigid_props=cube_properties,
-                collision_props=sim_utils.CollisionPropertiesCfg(
-                    contact_offset=0.001,
-                    rest_offset=0.0
-                ),
                 semantic_tags=[("class", "cube_1")],
             ),
         )
@@ -231,10 +229,6 @@ class FrankaGelsightEnvCfg(StackEnvCfg):
                 usd_path=LOCAL_RED_BLOCK_USD,
                 scale=(1.0, 1.0, 1.0),
                 rigid_props=cube_properties,
-                collision_props=sim_utils.CollisionPropertiesCfg(
-                    contact_offset=0.001,
-                    rest_offset=0.0
-                ),
                 semantic_tags=[("class", "cube_2")],
             ),
         )
@@ -245,10 +239,6 @@ class FrankaGelsightEnvCfg(StackEnvCfg):
                 usd_path=LOCAL_GREEN_BLOCK_USD,
                 scale=(1.0, 1.0, 1.0),
                 rigid_props=cube_properties,
-                collision_props=sim_utils.CollisionPropertiesCfg(
-                    contact_offset=0.001,
-                    rest_offset=0.0
-                ),
                 semantic_tags=[("class", "cube_3")],
             ),
         )

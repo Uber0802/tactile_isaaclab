@@ -80,131 +80,141 @@ def _unit_cube_mesh():
     return points, counts, indices
 
 
-def create_cube_mesh_usd(
-    output_path: str,
-    size: tuple[float, float, float] = (0.04, 0.04, 0.04),
-    color: tuple[float, float, float] = (0.2, 0.4, 0.8),
-    sdf_resolution: int = 256,
-) -> str:
+def _find_mesh_prim(stage: Usd.Stage) -> Usd.Prim | None:
     """
-    Create a USD file containing a rigid box whose collision shape is a
-    UsdGeom.Mesh (triangle mesh), enabling PhysX SDF collision to work.
-
-    Args:
-        output_path: Destination .usd file path.
-        size: (width, depth, height) of the box in metres.
-        color: (R, G, B) diffuse colour in [0, 1].
-        sdf_resolution: PhysX SDF resolution (higher = more accurate but slower).
-
-    Returns:
-        The resolved output path.
+    Return the first UsdGeom.Mesh prim in the stage.
+    Walks the tree so it is robust to different hierarchy layouts.
     """
-    output_path = os.path.abspath(output_path)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-    stage = Usd.Stage.CreateNew(output_path)
-    stage.SetMetadata("metersPerUnit", 1.0)
-    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
-
-    # ── Root Xform (rigid body) ───────────────────────────────────────────────
-    root_path = "/Cube"
-    root_xform = UsdGeom.Xform.Define(stage, root_path)
-    root_prim = root_xform.GetPrim()
-    UsdPhysics.RigidBodyAPI.Apply(root_prim)
-    UsdPhysics.MassAPI.Apply(root_prim)
-    UsdPhysics.MassAPI(root_prim).CreateMassAttr(0.1)
-
-    # Set default prim
-    stage.SetDefaultPrim(root_prim)
-
-    # ── Visual mesh (separate, no collision) ──────────────────────────────────
-    vis_path = root_path + "/VisualMesh"
-    vis_mesh = UsdGeom.Mesh.Define(stage, vis_path)
-    points, counts, indices = _unit_cube_mesh()
-    # Scale points to desired box size
-    sx, sy, sz = size
-    scaled_points = [Gf.Vec3f(p[0] * sx, p[1] * sy, p[2] * sz) for p in points]
-    vis_mesh.GetPointsAttr().Set(scaled_points)
-    vis_mesh.GetFaceVertexCountsAttr().Set(counts)
-    vis_mesh.GetFaceVertexIndicesAttr().Set(indices)
-    vis_mesh.GetSubdivisionSchemeAttr().Set("none")
-
-    # Material
-    mat_path = root_path + "/Looks/CubeMaterial"
-    mat = UsdShade.Material.Define(stage, mat_path)
-    shader_path = mat_path + "/Shader"
-    shader = UsdShade.Shader.Define(stage, shader_path)
-    shader.CreateIdAttr("UsdPreviewSurface")
-    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*color))
-    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.5)
-    mat.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
-    UsdShade.MaterialBindingAPI.Apply(vis_mesh.GetPrim()).Bind(mat)
-
-    # ── Collision mesh (UsdGeom.Mesh with SDF approximation) ──────────────────
-    col_path = root_path + "/CollisionMesh"
-    col_mesh = UsdGeom.Mesh.Define(stage, col_path)
-    col_mesh.GetPointsAttr().Set(scaled_points)
-    col_mesh.GetFaceVertexCountsAttr().Set(counts)
-    col_mesh.GetFaceVertexIndicesAttr().Set(indices)
-    col_mesh.GetSubdivisionSchemeAttr().Set("none")
-
-    # Make it invisible (collision only)
-    UsdGeom.Imageable(col_mesh.GetPrim()).MakeInvisible()
-
-    # Apply collision APIs
-    col_prim = col_mesh.GetPrim()
-    UsdPhysics.CollisionAPI.Apply(col_prim)
-
-    # Apply MeshCollisionAPI with SDF approximation
-    mesh_collision_api = UsdPhysics.MeshCollisionAPI.Apply(col_prim)
-    mesh_collision_api.CreateApproximationAttr("sdf")
-
-    # Apply PhysX SDF mesh API
-    sdf_api = PhysxSchema.PhysxSDFMeshCollisionAPI.Apply(col_prim)
+    for prim in stage.Traverse():
+        if prim.GetTypeName() == "Mesh":
+            return prim
+    return None
+ 
+def _apply_sdf_collision(prim: Usd.Prim, sdf_resolution: int) -> None:
+    """
+    Apply PhysX SDF collision APIs to an existing UsdGeom.Mesh prim.
+    Safe to call even if CollisionAPI is already present (Apply is idempotent).
+    """
+    UsdPhysics.CollisionAPI.Apply(prim)
+ 
+    mesh_col = UsdPhysics.MeshCollisionAPI.Apply(prim)
+    mesh_col.CreateApproximationAttr("sdf")
+ 
+    sdf_api = PhysxSchema.PhysxSDFMeshCollisionAPI.Apply(prim)
     sdf_api.CreateSdfResolutionAttr(sdf_resolution)
-    sdf_api.CreateSdfMarginAttr(0.01)         # 1% bounding-box margin
+    sdf_api.CreateSdfMarginAttr(0.01)              # 1 % bounding-box margin
     sdf_api.CreateSdfNarrowBandThicknessAttr(0.01)
-    sdf_api.CreateSdfSubgridResolutionAttr(6)  # sparse SDF
-
-    # ── PhysX collision properties ────────────────────────────────────────────
-    physx_col = PhysxSchema.PhysxCollisionAPI.Apply(col_prim)
+    sdf_api.CreateSdfSubgridResolutionAttr(6)      # sparse sub-grid
+ 
+    physx_col = PhysxSchema.PhysxCollisionAPI.Apply(prim)
     physx_col.CreateContactOffsetAttr(0.001)
     physx_col.CreateRestOffsetAttr(0.0)
 
-    stage.Save()
-    print(f"[create_cube_mesh_usd] Saved: {output_path}")
-    print(f"  Size:           {sx:.4f} x {sy:.4f} x {sz:.4f} m")
-    print(f"  SDF resolution: {sdf_resolution}")
-    print(f"  Collision prim: {col_path}  (UsdGeom.Mesh + SDF approximation)")
-    return output_path
+def _is_url(path: str) -> bool:
+    return path.startswith("http://") or path.startswith("https://") or path.startswith("omniverse://")
 
+def upgrade_block_usd(
+    reference_usd_path: str,
+    output_path: str,
+    sdf_resolution: int = 256,
+) -> str:
+    """
+    Create a USD that references an existing block USD and overrides its Mesh
+    prim to add PhysX SDF collision.  All other properties are inherited.
+ 
+    Args:
+        reference_usd_path: Absolute path to the source Nucleus USD.
+        output_path:        Destination .usd file path.
+        sdf_resolution:     PhysX SDF voxel resolution.
+ 
+    Returns:
+        The resolved output path.
+    """
+    # Don't abspath URLs — only resolve local paths
+    if not _is_url(reference_usd_path):
+        reference_usd_path = os.path.abspath(reference_usd_path)
+    output_path = os.path.abspath(output_path)
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+ 
+    # ── Inspect the reference to locate the Mesh prim ────────────────────────
+    ref_stage = Usd.Stage.Open(reference_usd_path)
+    ref_mesh_prim = _find_mesh_prim(ref_stage)
+    if ref_mesh_prim is None:
+        raise RuntimeError(
+            f"No UsdGeom.Mesh found in reference USD: {reference_usd_path}\n"
+            "The block must already use a triangle mesh for SDF to work."
+        )
+ 
+    # Prim path within the reference (e.g. "/red_block/Cube")
+    mesh_prim_path = str(ref_mesh_prim.GetPath())
+ 
+    # Default prim of the reference (e.g. "red_block")
+    ref_default_prim = ref_stage.GetDefaultPrim()
+    default_prim_name = ref_default_prim.GetName() if ref_default_prim else "block"
+ 
+    print(f"[upgrade_block_usd] Reference : {reference_usd_path}")
+    print(f"  Default prim  : /{default_prim_name}")
+    print(f"  Mesh prim     : {mesh_prim_path}")
+ 
+    # ── Build the output stage ────────────────────────────────────────────────
+    stage = Usd.Stage.CreateNew(output_path)
+ 
+    # Inherit stage metadata from the reference
+    stage.SetMetadata("metersPerUnit", ref_stage.GetMetadata("metersPerUnit") or 1.0)
+    up_axis = UsdGeom.GetStageUpAxis(ref_stage)
+    UsdGeom.SetStageUpAxis(stage, up_axis)
+ 
+    # ── Reference the original USD ────────────────────────────────────────────
+    root_prim = stage.DefinePrim(f"/{default_prim_name}")
+    root_prim.GetReferences().AddReference(reference_usd_path)
+    stage.SetDefaultPrim(root_prim)
+ 
+    # ── Override only the Mesh prim — add SDF collision APIs ──────────────────
+    override_prim = stage.OverridePrim(mesh_prim_path)
+    _apply_sdf_collision(override_prim, sdf_resolution)
+ 
+    stage.Save()
+ 
+    print(f"  Output        : {output_path}")
+    print(f"  SDF resolution: {sdf_resolution}")
+    print(f"  Override prim : {mesh_prim_path}  (SDF APIs added)")
+    print()
+    return output_path
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
 BLOCK_VARIANTS = [
-    ("blue_block_mesh.usd",  (0.04, 0.04, 0.04), (0.0, 0.1, 0.8)),
-    ("red_block_mesh.usd",   (0.04, 0.04, 0.04), (0.8, 0.1, 0.0)),
-    ("green_block_mesh.usd", (0.04, 0.04, 0.04), (0.1, 0.7, 0.1)),
+    ("red_block_sdf.usd",   "red_block.usd"),
+    ("blue_block_sdf.usd",  "blue_block.usd"),
+    ("green_block_sdf.usd", "green_block.usd"),
 ]
 
-if __name__ == "__main__":
-    if args.all:
-        out_dir = os.path.join(os.path.dirname(__file__), "../../assets/Props")
-        for filename, size, color in BLOCK_VARIANTS:
-            create_cube_mesh_usd(
-                output_path=os.path.join(out_dir, filename),
-                size=size,
-                color=color,
-                sdf_resolution=args.sdf_resolution,
-            )
-    else:
-        create_cube_mesh_usd(
-            output_path=args.output,
-            size=tuple(args.size),
-            color=tuple(args.color),
-            sdf_resolution=args.sdf_resolution,
+def _nucleus_dir() -> str:
+    nucleus = os.environ.get("ISAAC_NUCLEUS_DIR")
+    if nucleus:
+        return nucleus
+    # 2. Isaac Lab's built-in asset utility (preferred)
+    try:
+        from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR as _NUCLEUS
+        return _NUCLEUS
+    except ImportError:
+        raise EnvironmentError(
+            "ISAAC_NUCLEUS_DIR is not set. "
+            "Source the Isaac Lab setup script before running this tool."
         )
 
+if __name__ == "__main__":
+    nucleus = _nucleus_dir()
+    out_dir = os.path.join(os.path.dirname(__file__), "../../assets/Props")
+    for out_filename, src_filename in BLOCK_VARIANTS:
+        upgrade_block_usd(
+            reference_usd_path=os.path.join(nucleus, "Props/Blocks", src_filename),
+            output_path=os.path.join(out_dir, out_filename),
+            sdf_resolution=args.sdf_resolution,
+        )
+        
     simulation_app.close()
