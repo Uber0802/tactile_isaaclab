@@ -160,7 +160,7 @@ def grasped_cube_to_stack_target_reward(
     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
     cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
     cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    stack_height_offset: float = 0.0468,
+    stack_height_offset: float = 0.0406,
     max_distance: float = 0.15,
     max_reward: float = 0.5,
 ) -> torch.Tensor:
@@ -196,44 +196,6 @@ def ee_to_cube_distance_reward(
     shaped_reward = torch.clamp(1.0 - (distance / max_distance), min=0.0, max=1.0) * max_reward
 
     _maybe_visualize_ee_pos(env, ee_pos)
-
-    joint_log = ""
-    if JOINT_POS_LOG_ENVS:
-        robot = env.scene["robot"]
-        joint_attr = "_joint_log_indices"
-        name_attr = "_joint_log_names"
-        if not hasattr(env, joint_attr):
-            joint_name_to_idx = {name: idx for idx, name in enumerate(robot.joint_names)}
-            resolved_names = [name for name in JOINT_NAMES_TO_LOG if name in joint_name_to_idx]
-            joint_ids = [joint_name_to_idx[name] for name in resolved_names]
-            setattr(env, joint_attr, joint_ids)
-            setattr(env, name_attr, resolved_names)
-        joint_ids = getattr(env, joint_attr)
-        joint_names = getattr(env, name_attr)
-        if joint_ids:
-            joint_vals = robot.data.joint_pos[:, joint_ids].detach().cpu()
-            joint_log = {
-                env_idx: ", ".join(
-                    f"{name}={joint_vals[env_idx, idx]: .4f}" for idx, name in enumerate(joint_names)
-                )
-                for env_idx in JOINT_POS_LOG_ENVS
-                if env_idx < env.num_envs
-            }
-
-
-    log_path = os.path.join(os.getcwd(), "dis.txt")
-    distance_cpu = distance.detach().cpu()
-    shaped_reward_cpu = shaped_reward.detach().cpu()
-    with open(log_path, "a", encoding="utf-8") as log_file:
-        for env_idx in range(env.num_envs):
-            if env_idx == 135:
-                log_file.write(
-                    f"env {env_idx} : distance = {distance_cpu[env_idx].item():.6f}, shaped_reward = {shaped_reward_cpu[env_idx].item():.6f}\n"
-                )
-
-                # if joint_log and env_idx in joint_log:
-                #     log_file.write(f"env {env_idx} joints: {joint_log[env_idx]}\n")
-
                 
     return shaped_reward
 
@@ -252,62 +214,12 @@ def ee_to_cube_distance_reward_exp(
     distance = torch.linalg.vector_norm(ee_pos - cube_pos, dim=1)
     shaped_reward = torch.exp(-10 * (distance - 0.1)) / 3.0
 
-    log_path = os.path.join(os.getcwd(), "dis.txt")
-    distance_cpu = distance.detach().cpu()
-    shaped_reward_cpu = shaped_reward.detach().cpu()
-    with open(log_path, "a", encoding="utf-8") as log_file:
-        for env_idx in range(env.num_envs):
-            if env_idx == 135:
-                log_file.write(
-                    f"env {env_idx} : distance = {distance_cpu[env_idx].item():.6f}, shaped_reward_exp = {shaped_reward_cpu[env_idx].item():.6f}\n"
-                )
-
     return shaped_reward
-
-
-def cube_to_stack_target_alignment_reward(
-    env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    stack_height_offset: float = 0.048,
-    max_xy_distance: float = 0.16,
-    max_z_distance: float = 0.048,
-    xy_weight: float = 1.0,
-    z_weight: float = 5.0,
-    max_reward: float = 1.0,
-) -> torch.Tensor:
-    """Encourage the blue cube to align above the red cube with higher weight on the Z-axis alignment."""
-
-    cube_1: RigidObject = env.scene[cube_1_cfg.name]
-    cube_2: RigidObject = env.scene[cube_2_cfg.name]
-
-    target_pos = cube_2.data.root_pos_w.clone()
-    target_pos[:, 2] += stack_height_offset
-    _maybe_visualize_stack_target(env, cube_2.data.root_pos_w, 0.5, marker_name="cube_2", color=(1.0, 0.0, 0.0))
-    delta = cube_1.data.root_pos_w - target_pos
-
-    xy_distance = torch.linalg.vector_norm(delta[:, :2], dim=1)
-    z_distance = torch.abs(delta[:, 2])
-
-
-
-    import ipdb; ipdb.set_trace()
-
-
-
-
-    xy_reward = torch.clamp(1.0 - (xy_distance / max_xy_distance), min=0.0, max=1.0)
-    z_reward = torch.clamp(1.0 - (z_distance / max_z_distance), min=0.0, max=1.0)
-    # z_diff = torch.abs(z_distance - max_z_distance)
-    # z_reward = torch.clamp(1.0 - (z_diff / max_z_distance), min=0.0, max=1.0)
-
-    combined_reward = ((xy_weight * xy_reward) + (z_weight * z_reward)) / (xy_weight + z_weight)
-    return combined_reward * max_reward
 
 def cube_z_reward_exp(
     env: ManagerBasedRLEnv,
     cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    max_z_distance: float = 0.0234 * 3,
+    max_z_distance: float = 0.0203 * 3,
 ) -> torch.Tensor:
     """Apply a base-1.1 logarithmic reward directly on cube-1's Z height."""
 
@@ -315,8 +227,6 @@ def cube_z_reward_exp(
     cube_height = torch.clamp(cube_1.data.root_pos_w[:, 2], min=0.0, max=max_z_distance)
     exceed = cube_1.data.root_pos_w[:, 2] - (max_z_distance + 0.01)
     exceed = torch.clamp(exceed, min=0.0)
-
-    # import ipdb; ipdb.set_trace()
 
     reward = (torch.log1p(cube_height) / math.log(1.1)) * 2 
     reward -= exceed 
@@ -372,23 +282,10 @@ def cube_precision_xy_reward_exp(
     target_pos[:, 2] += stack_height_offset
     delta = cube_1.data.root_pos_w - target_pos
 
-    # _maybe_visualize_stack_target(env, cube_1.data.root_pos_w, 0.5, marker_name="cube_1_exp", color=(0.0, 0.6, 0.2))
-
     z_aligned = torch.abs(delta[:, 2]) < height_tolerance
     xy_distance = torch.linalg.vector_norm(delta[:, :2], dim=1)
     shaped_reward = torch.exp(-decay_rate * (xy_distance - distance_offset)) / 2.0 - 0.1
     xy_reward = torch.clamp(shaped_reward, min=0.0)
-
-    # log per-environment metrics for debugging
-    log_path = os.path.join(os.getcwd(), "xy_exp30.txt")
-    xy_distance_cpu = xy_distance.detach().cpu()
-    xy_reward_cpu = xy_reward.detach().cpu()
-    with open(log_path, "a", encoding="utf-8") as log_file:
-        for env_idx in range(env.num_envs):
-            if z_aligned[env_idx] and (env_idx in (495, 496, 527, 528)):
-                log_file.write(
-                    f"env {env_idx} : xy_distance = {xy_distance_cpu[env_idx].item():.6f}, xy_reward = {xy_reward_cpu[env_idx].item():.6f}\n"
-                )
 
     return torch.where(z_aligned, xy_reward, torch.zeros_like(xy_reward))
 

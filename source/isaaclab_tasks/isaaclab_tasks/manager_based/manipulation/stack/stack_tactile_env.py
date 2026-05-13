@@ -20,6 +20,7 @@ class StackTactileEnv(ManagerBasedRLEnv):
         self._save_tactile_force_field = os.environ.get("FORGE_SAVE_TACTILE_FORCE_FIELD", "0") == "1"
         self._tactile_save_dir = os.environ.get("FORGE_TACTILE_SAVE_DIR", "./tactile_dataset/data")
         self._tactile_save_interval = int(os.environ.get("FORGE_TACTILE_SAVE_INTERVAL", "1"))
+        self._tactile_reward_instruction = os.environ.get("FORGE_TACTILE_REWARD_INSTRUCTION", "stack an object on a box")
         
         if self._save_tactile_force_field:
             os.makedirs(self._tactile_save_dir, exist_ok=True)
@@ -47,7 +48,7 @@ class StackTactileEnv(ManagerBasedRLEnv):
         episode_path = os.path.join(self._tactile_save_dir, f"ep{self._tactile_saved_episode_count}.npy")
         episode_tensor = np.stack(self._tactile_episode_frames, axis=0).astype(np.float16, copy=False)
         payload = {
-            "Task": "stack cube_2 on cube_1",
+            "Task": self._tactile_reward_instruction,
             "Tactile": episode_tensor,
             "Success": int(success),
         }
@@ -126,5 +127,5 @@ class StackTactileEnv(ManagerBasedRLEnv):
         return obs, info
 
     def close(self):
-        self._flush_tactile_episode()
+        self._flush_tactile_episode(success=int(self.ep_succeeded[0].item()))
         super().close()

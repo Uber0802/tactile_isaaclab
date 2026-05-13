@@ -32,15 +32,6 @@ class XrAnchorRotationMode(enum.Enum):
     """Custom rotation mode: user provided function to calculate the rotation."""
 
 
-def default_anchor_rotation_custom_func(headpose: np.ndarray, primpose: np.ndarray) -> np.ndarray:
-    """Default custom rotation function for the XR anchor.
-
-    Returns:
-        np.ndarray: Identity quaternion as numpy array [w, x, y, z]
-    """
-    return np.array([1, 0, 0, 0], dtype=np.float64)
-
-
 @configclass
 class XrCfg:
     """Configuration for viewing and interacting with the environment through an XR device."""

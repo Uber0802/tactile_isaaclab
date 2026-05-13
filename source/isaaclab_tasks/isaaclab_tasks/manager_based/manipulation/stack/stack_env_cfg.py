@@ -167,7 +167,7 @@ class RewardsCfg:
         params={
             "cube_1_cfg": SceneEntityCfg("cube_1"),
             "cube_2_cfg": SceneEntityCfg("cube_2"),
-            "stack_height_offset": 0.0468,
+            "stack_height_offset": 0.0406,
             "height_tolerance": 0.005,
             "max_xy_distance": 0.16,
             "max_reward": 0.1,
@@ -180,7 +180,7 @@ class RewardsCfg:
         params={
             "cube_1_cfg": SceneEntityCfg("cube_1"),
             "cube_2_cfg": SceneEntityCfg("cube_2"),
-            "stack_height_offset": 0.0468,
+            "stack_height_offset": 0.0406,
             "height_tolerance": 0.005,
             "distance_offset": 0.1,
             "decay_rate": 30.0,
@@ -194,7 +194,7 @@ class RewardsCfg:
             "cube_cfg": SceneEntityCfg("cube_2"),
             "cube_1_cfg": SceneEntityCfg("cube_1"),
             "cube_2_cfg": SceneEntityCfg("cube_2"),
-            "stack_height_offset": 0.0468,
+            "stack_height_offset": 0.0406,
             "height_tolerance": 0.005,
             "penalty_scale": 5.0,
         },

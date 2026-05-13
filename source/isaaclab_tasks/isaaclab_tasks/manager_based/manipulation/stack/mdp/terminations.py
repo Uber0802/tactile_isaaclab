@@ -28,9 +28,9 @@ def cubes_stacked(
     cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
     cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
     cube_3_cfg: SceneEntityCfg | None = None,
-    xy_threshold: float = 0.04,
+    xy_threshold: float = 0.0406,
     height_threshold: float = 0.005,
-    height_diff: float = 0.04,
+    height_diff: float = 0.0406,
     atol: float = 0.0001,
     rtol: float = 0.0001,
 ) -> torch.Tensor:
@@ -49,7 +49,7 @@ def cubes_stacked(
     # Check cube positions
     stacked = xy_dist_c12 < xy_threshold
     stacked = torch.logical_and(h_dist_c12 - height_diff < height_threshold, stacked)
-    stacked = torch.logical_and(pos_diff_c12[:, 2] > 0.0, stacked)
+    stacked = torch.logical_and(pos_diff_c12[:, 2] > height_diff, stacked)
 
     if cube_3_cfg is not None:
         cube_3: RigidObject = env.scene[cube_3_cfg.name]
