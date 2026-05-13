@@ -80,7 +80,6 @@ class XrCfg:
     Typical useful range: 0.3 – 1.5 seconds depending on runtime frame-rate and comfort.
     """
 
-    anchor_rotation_custom_func: Callable[[np.ndarray, np.ndarray], np.ndarray] = default_anchor_rotation_custom_func
     """Specifies the function to calculate the rotation of the XR anchor when anchor_rotation_mode is CUSTOM.
 
     Args:
