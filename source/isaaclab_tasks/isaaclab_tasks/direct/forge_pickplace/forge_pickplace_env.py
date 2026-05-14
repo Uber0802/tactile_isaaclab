@@ -455,19 +455,28 @@ class ForgePegInsertPickPlaceEnv(ForgeEnv):
         # Sample uniform in ±source_hole_offset_range per axis, then reject any sample whose
         # XY centre lies within source_hole_min_distance of the destination centre so the
         # two hole bases can't overlap.
-        offset_range = torch.tensor(
-            self.cfg_task.source_hole_offset_range, dtype=torch.float32, device=self.device
-        )
-        min_dist = float(self.cfg_task.source_hole_min_distance)
         n_envs = len(env_ids)
-        source_offset_xyz = torch.zeros((n_envs, 3), dtype=torch.float32, device=self.device)
-        pending = torch.arange(n_envs, device=self.device)
-        while pending.numel() > 0:
-            rand_sample = 2 * (torch.rand((pending.numel(), 3), device=self.device) - 0.5)
-            candidate = rand_sample * offset_range.unsqueeze(0)
-            accepted = torch.linalg.norm(candidate[:, :2], dim=1) >= min_dist
-            source_offset_xyz[pending[accepted]] = candidate[accepted]
-            pending = pending[~accepted]
+        fixed_offset = getattr(self.cfg_task, "source_hole_fixed_offset", None)
+        if fixed_offset is not None:
+            source_offset_xyz = (
+                torch.tensor(fixed_offset, dtype=torch.float32, device=self.device)
+                .unsqueeze(0)
+                .expand(n_envs, -1)
+                .clone()
+            )
+        else:
+            offset_range = torch.tensor(
+                self.cfg_task.source_hole_offset_range, dtype=torch.float32, device=self.device
+            )
+            min_dist = float(self.cfg_task.source_hole_min_distance)
+            source_offset_xyz = torch.zeros((n_envs, 3), dtype=torch.float32, device=self.device)
+            pending = torch.arange(n_envs, device=self.device)
+            while pending.numel() > 0:
+                rand_sample = 2 * (torch.rand((pending.numel(), 3), device=self.device) - 0.5)
+                candidate = rand_sample * offset_range.unsqueeze(0)
+                accepted = torch.linalg.norm(candidate[:, :2], dim=1) >= min_dist
+                source_offset_xyz[pending[accepted]] = candidate[accepted]
+                pending = pending[~accepted]
 
         source_state = self._source_fixed_asset.data.default_root_state.clone()[env_ids]
         source_state[:, 0:3] = fixed_state[:, 0:3] + source_offset_xyz
