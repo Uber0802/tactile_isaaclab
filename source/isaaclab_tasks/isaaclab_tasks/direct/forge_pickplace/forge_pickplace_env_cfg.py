@@ -98,11 +98,29 @@ class ForgeTaskPegInsertPickPlaceCfg(ForgeTaskPegInsertCfg):
         if baseline == "B2":
             self._apply_baseline_B2()
             return
+        if baseline == "single_pos":
+            self._apply_baseline_single_pos()
+            return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskPegInsertPickPlaceCfg. "
             f"Implemented: A (frozen), B (tactile force fields), "
-            f"B2 (frozen ReWiND CNN -> 768-dim embedding)."
+            f"B2 (frozen ReWiND CNN -> 768-dim embedding), "
+            f"single_pos (A obs + all reset position randomization zeroed, "
+            f"source hole at +10cm X from destination)."
         )
+
+    def _apply_baseline_single_pos(self) -> None:
+        """Single-position baseline: identical to A in obs/state, but every
+        reset-time pose randomizer is zeroed and the source hole is pinned
+        at +10 cm X from the destination hole. Used for collecting
+        deterministic tactile trajectories. Only mutates this cfg instance —
+        does not affect A/B/B2.
+        """
+        self.task.fixed_asset_init_pos_noise = [0.0, 0.0, 0.0]
+        self.task.fixed_asset_init_orn_range_deg = 0.0
+        self.task.hand_init_pos_noise = [0.0, 0.0, 0.0]
+        self.task.hand_init_orn_noise = [0.0, 0.0, 0.0]
+        self.task.source_hole_fixed_offset = [0.10, 0.0, 0.0]
 
     def _apply_baseline_B(self) -> None:
         """Baseline B: feed the (left, right) GelSight force fields (normal + shear)

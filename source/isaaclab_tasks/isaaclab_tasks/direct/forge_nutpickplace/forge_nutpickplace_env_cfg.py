@@ -111,10 +111,14 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         if baseline == "B2":
             self._apply_baseline_B2()
             return
+        if baseline == "single_pos":
+            self._apply_baseline_single_pos()
+            return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskNutThreadPickPlaceCfg. "
             f"Implemented: A (frozen), B (tactile force fields), "
-            f"B2 (frozen ReWiND CNN -> 768-dim embedding)."
+            f"B2 (frozen ReWiND CNN -> 768-dim embedding), "
+            f"single_pos (A obs + all reset position randomization zeroed)."
         )
 
     def _apply_baseline_B(self) -> None:
@@ -145,6 +149,19 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         # Keep the relative order of A's existing entries; just append tactile.
         self.obs_order = list(self.obs_order) + tactile_keys
         self.state_order = list(self.state_order) + tactile_keys
+
+    def _apply_baseline_single_pos(self) -> None:
+        """Single-position baseline: identical to A in obs/state, but zero out
+        every reset-time pose randomizer so bolt / nut / hand spawn at exactly
+        the same pose every episode. Used for collecting deterministic tactile
+        trajectories. Only mutates this cfg instance — does not affect A/B/B2.
+        """
+        self.task.fixed_asset_init_pos_noise = [0.0, 0.0, 0.0]
+        self.task.fixed_asset_init_orn_range_deg = 0.0
+        self.task.nut_table_pos_noise = [0.0, 0.0, 0.0]
+        self.task.nut_table_yaw_range = 0.0
+        self.task.hand_init_pos_noise = [0.0, 0.0, 0.0]
+        self.task.hand_init_orn_noise = [0.0, 0.0, 0.0]
 
     def _apply_baseline_B2(self) -> None:
         """Baseline B2: frozen ReWiND CNN encoder produces a 768-dim tactile
