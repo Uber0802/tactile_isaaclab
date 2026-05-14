@@ -3,10 +3,10 @@
 CACHE_DIR="/tmp/${USER}_${HOSTNAME%%.*}_isaac"
 mkdir -p "$CACHE_DIR/tmp" "$CACHE_DIR/cache/ov" "$CACHE_DIR/torch/triton" "$CACHE_DIR/torch/inductor"
 
-# Baseline B2: frozen ReWiND CNN encoder produces a 768-dim tactile embedding
-# per env per step. Policy + critic see 768 dims (not 3000) for the tactile
-# modality. Encoder weights come from the nut-thread ReWiND ckpt below and
-# stay frozen.
+# single_pos: same obs/reward as baseline A, but every reset-time pose
+# randomizer (bolt xy+yaw, nut xy+yaw, hand xy+orn) is zeroed so every
+# episode spawns at exactly the same scene. For collecting deterministic
+# tactile trajectories.
 TMPDIR="$CACHE_DIR/tmp" \
 XDG_CACHE_HOME="$CACHE_DIR/cache" \
 OMNI_KIT_CACHE_DIR="$CACHE_DIR/cache/ov" \
@@ -14,11 +14,11 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-FORGE_TACTILE_ENCODER_CKPT=/mnt/tank/tactile/Tactile-Reward/checkpoints_nutthread_v3/nutthread_epoch99.pth \
-FORGE_TACTILE_ENCODER_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-party/Tactile-ReWiND \
+FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
+FORGE_TACTILE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/nutpickplace_single_pos \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-NutThread-PickPlace-Direct-v0 \
-    --baseline B2 \
+    --baseline single_pos \
     --num_envs 256 \
     --max_iterations 10000 \
     --enable_cameras \
@@ -26,8 +26,4 @@ FORGE_TACTILE_ENCODER_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-par
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name NutThread_PickPlace_baselineB2
-
-
-# FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
-# FORGE_TACTILE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/nutpickplace_baselineB2 \
+    --wandb-name NutThread_PickPlace_single_pos

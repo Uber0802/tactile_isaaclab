@@ -22,6 +22,11 @@ class ForgePegInsertPickPlace(ForgePegInsert):
     # never overlap.
     source_hole_offset_range: list = [0.10, 0.10, 0.0]
     source_hole_min_distance: float = 0.05
+    # Optional deterministic source-hole offset. When non-None it overrides the
+    # rejection-sampled offset above so every env spawns the source hole at the
+    # exact same place relative to the destination hole. Used by the `single_pos`
+    # baseline for deterministic tactile trajectories. None = original behavior.
+    source_hole_fixed_offset: list = None
 
     # Gripper starts clearly above the peg top (peg sticks ~2.5 cm above the source hole),
     # leaving room for the fingers to descend and grasp.

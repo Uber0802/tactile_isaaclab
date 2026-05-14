@@ -104,11 +104,28 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         if baseline == "B2":
             self._apply_baseline_B2()
             return
+        if baseline == "single_pos":
+            self._apply_baseline_single_pos()
+            return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskGearMeshPickPlaceCfg. "
             f"Implemented: A (frozen), B (tactile force fields), "
-            f"B2 (frozen ReWiND CNN -> 768-dim embedding)."
+            f"B2 (frozen ReWiND CNN -> 768-dim embedding), "
+            f"single_pos (A obs + all reset position randomization zeroed)."
         )
+
+    def _apply_baseline_single_pos(self) -> None:
+        """Single-position baseline: identical to A in obs/state, but zero out
+        every reset-time pose randomizer so base / gear / hand spawn at exactly
+        the same pose every episode. Used for collecting deterministic tactile
+        trajectories. Only mutates this cfg instance — does not affect A/B/B2.
+        """
+        self.task.fixed_asset_init_pos_noise = [0.0, 0.0, 0.0]
+        self.task.fixed_asset_init_orn_range_deg = 0.0
+        self.task.gear_table_pos_noise = [0.0, 0.0, 0.0]
+        self.task.gear_table_yaw_range = 0.0
+        self.task.hand_init_pos_noise = [0.0, 0.0, 0.0]
+        self.task.hand_init_orn_noise = [0.0, 0.0, 0.0]
 
     def _apply_baseline_B(self) -> None:
         """Baseline B: feed the (left, right) GelSight force fields (normal + shear)
