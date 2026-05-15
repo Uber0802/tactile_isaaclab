@@ -155,6 +155,13 @@ class ForgeEnv(FactoryEnv):
         cfg = state.get("args", {})
         num_strided = cfg.get("num_strided_layers", None) or 3
         bimanual_axis = cfg.get("bimanual_axis", None) or "height"
+        # The train script (Tactile-ReWiND/scripts/train_isaaclab_overfit.py)
+        # stores the channel selection as `shear_channels` — a list of indices
+        # into the saved (T, 40, 25, 3) layout where 0=normal, 1=shear_x,
+        # 2=shear_y. `in_channels` of the model is just len(shear_channels).
+        # Defaults to (1, 2) — shear-only — matching the train script default.
+        shear_channels = tuple(cfg.get("shear_channels", None) or (1, 2))
+        in_channels = len(shear_channels)
         self._tactile_model = TactileReWiNDTransformer(
             max_length=cfg.get("max_length", 16),
             text_dim=384,
@@ -164,10 +171,13 @@ class ForgeEnv(FactoryEnv):
             per_hand_dim=cfg.get("per_hand_dim", 384),
             num_strided_layers=num_strided,
             bimanual_axis=bimanual_axis,
+            in_channels=in_channels,
         ).to(self.device)
         self._tactile_model.load_state_dict(state["model_state_dict"])
         self._tactile_model.eval()
         self._tactile_model_max_length = cfg.get("max_length", 16)
+        self._tactile_in_channels = in_channels
+        self._tactile_shear_channels = shear_channels
 
         # Encode instruction once via MiniLM, then drop the encoder.
         instruction = os.getenv(
@@ -189,9 +199,10 @@ class ForgeEnv(FactoryEnv):
         del minilm, tok
         self._tactile_text_emb = text_emb.float()                 # (1, 384)
 
-        # Per-env rolling buffer: (B, T, 40, 25, 2) bimanual H-stacked, Fx/Fy.
+        # Per-env rolling buffer: (B, T, 40, 25, C) bimanual H-stacked.
+        # C=2 → shear-only (Fx, Fy); C=3 → normal + shear (Fz, Fx, Fy).
         self._tactile_buffer = torch.zeros(
-            self.num_envs, self._tactile_model_max_length, 40, 25, 2,
+            self.num_envs, self._tactile_model_max_length, 40, 25, in_channels,
             device=self.device, dtype=torch.float32,
         )
         self._tactile_reward_scale = float(
@@ -208,9 +219,18 @@ class ForgeEnv(FactoryEnv):
         left = self.scene.sensors["left_tactile_sensor"]
         right = self.scene.sensors["right_tactile_sensor"]
         nrows, ncols = left.cfg.tactile_array_size           # (20, 25)
+        # Build the full (B, 40, 25, 3) tensor in the (normal, shear_x, shear_y)
+        # layout that `get_left_tactile_vector_field` writes to disk, then index
+        # the last dim with `shear_channels` so the ckpt sees exactly the same
+        # channel selection / order it was trained on.
         l_shear = left.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
         r_shear = right.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
-        current = torch.cat([l_shear, r_shear], dim=1).float()   # (B, 40, 25, 2)
+        l_normal = left.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+        r_normal = right.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+        l_full = torch.cat([l_normal, l_shear], dim=-1)          # (B, 20, 25, 3)
+        r_full = torch.cat([r_normal, r_shear], dim=-1)
+        full = torch.cat([l_full, r_full], dim=1).float()        # (B, 40, 25, 3)
+        current = full[..., list(self._tactile_shear_channels)]  # (B, 40, 25, C)
 
         # Roll window left, append current frame.
         self._tactile_buffer = torch.roll(self._tactile_buffer, shifts=-1, dims=1)
