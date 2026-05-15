@@ -113,6 +113,18 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
     if hasattr(env_cfg, "apply_baseline"):
         env_cfg.apply_baseline(args_cli.baseline)
+    # Baseline-scoped PPO overrides. Mutates only this run's agent_cfg dict;
+    # the shared yaml is untouched, so other baselines see their original cfg.
+    # single_pos: every env resets to the same pose -> 256 envs only give ~1
+    # effective sample. Compensate by training each rollout harder
+    # (mini_epochs 4 -> 8) and stretching the rollout horizon (256 -> 512) so
+    # the critic gets longer value-bootstrap windows per update.
+    if args_cli.baseline == "single_pos":
+        ppo_cfg = agent_cfg["params"]["config"]
+        ppo_cfg["mini_epochs"] = 8
+        ppo_cfg["horizon_length"] = 512
+        if "central_value_config" in ppo_cfg:
+            ppo_cfg["central_value_config"]["mini_epochs"] = 8
     # check for invalid combination of CPU device with distributed training
     if args_cli.distributed and args_cli.device is not None and "cpu" in args_cli.device:
         raise ValueError(

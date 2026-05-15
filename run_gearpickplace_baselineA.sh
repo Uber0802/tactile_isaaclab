@@ -3,9 +3,13 @@
 CACHE_DIR="/tmp/${USER}_${HOSTNAME%%.*}_isaac"
 mkdir -p "$CACHE_DIR/tmp" "$CACHE_DIR/cache/ov" "$CACHE_DIR/torch/triton" "$CACHE_DIR/torch/inductor"
 
-# Baseline A (default no-op obs/state order) + tactile reward shaping.
-# The FORGE_TACTILE_REWARD_* env vars activate _init_tactile_reward() in
-# forge_env.py, which adds the ReWiND progress scalar (scaled) to rew_buf.
+# Baseline A (no tactile in obs/state) + tactile force-field dump for downstream
+# model training. Two hydra overrides:
+#   full_experiment_name=GearMesh_PickPlace_baselineA  → ckpts go to
+#     logs/rl_games/ForgeGearPickPlace/GearMesh_PickPlace_baselineA/nn/
+#     instead of the default `test/` dir which gets clobbered by other runs.
+#   save_frequency=20  → ckpt every 20 epochs (vs default 100) so curriculum
+#     rollout has fine-grained skill-level snapshots.
 TMPDIR="$CACHE_DIR/tmp" \
 XDG_CACHE_HOME="$CACHE_DIR/cache" \
 OMNI_KIT_CACHE_DIR="$CACHE_DIR/cache/ov" \
@@ -13,16 +17,18 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-FORGE_TACTILE_REWARD_CKPT=/mnt/tank/tactile/Tactile-Reward/checkpoints_data_3_baseline_3ch_r03_flip_split/isaaclab_overfit_epoch99.pth \
-FORGE_TACTILE_REWARD_SCALE=0.1 \
-FORGE_TACTILE_REWARD_INSTRUCTION="grasp peg and insert to another hole" \
+FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
+FORGE_TACTILE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/gearpickplace_baselineA \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
-    --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
+    --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
     --baseline A \
+    --headless \
     --num_envs 128 \
     --max_iterations 10000 \
     --enable_cameras \
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name PegInsert_PickPlace_baselineA_TacReward
+    --wandb-name GearMesh_PickPlace_baselineA \
+    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineA \
+    agent.params.config.save_frequency=20

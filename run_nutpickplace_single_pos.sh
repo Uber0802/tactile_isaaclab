@@ -19,7 +19,7 @@ FORGE_TACTILE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/nutpickplace_single_pos
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-NutThread-PickPlace-Direct-v0 \
     --baseline single_pos \
-    --num_envs 256 \
+    --num_envs 128 \
     --max_iterations 10000 \
     --enable_cameras \
     --headless \
