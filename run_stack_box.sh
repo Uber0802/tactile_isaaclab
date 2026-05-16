@@ -7,6 +7,7 @@ FORGE_TACTILE_REWARD_INSTRUCTION="grasp a box and stack it on another box" \
     --num_envs 256 \
     --max_iterations 10000 \
     --enable_cameras \
+    --headless \
     --track \
     --wandb-entity b06902045-national-taiwan-university \
     --wandb-project-name tactile-rewind \

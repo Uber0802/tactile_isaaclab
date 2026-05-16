@@ -205,8 +205,6 @@ def stack_object_precision_xy_reward_exp(
     target_pos[:, 2] += stack_height_offset
     delta = _get_pos(stack_object) - target_pos
 
-    print('delta', delta)
-
     z_aligned = torch.abs(delta[:, 2]) < height_tolerance
     xy_distance = torch.linalg.vector_norm(delta[:, :2], dim=1)
     shaped_reward = torch.exp(-decay_rate * (xy_distance - distance_offset)) / 2.0 - 0.1
