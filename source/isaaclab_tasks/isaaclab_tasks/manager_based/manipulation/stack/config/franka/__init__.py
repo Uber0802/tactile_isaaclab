@@ -15,16 +15,6 @@ from . import agents
 ##
 
 gym.register(
-    id="Isaac-Stack-Cube-Franka-Gelsight-v0",
-    entry_point="isaaclab_tasks.manager_based.manipulation.stack.stack_tactile_env:StackTactileEnv",
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.stack_gelsight_env_cfg:FrankaGelsightEnvCfg",
-        "rl_games_cfg_entry_point": f"{agents.__name__}:rl_games_ppo_cfg.yaml",
-    },
-    disable_env_checker=True,
-)
-
-gym.register(
     id="Isaac-Stack-Cube-Franka-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     kwargs={

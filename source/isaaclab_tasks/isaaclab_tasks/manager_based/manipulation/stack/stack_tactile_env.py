@@ -129,3 +129,14 @@ class StackTactileEnv(ManagerBasedRLEnv):
     def close(self):
         self._flush_tactile_episode(success=int(self.ep_succeeded[0].item()))
         super().close()
+    
+    def _post_physics_step(self):
+        # Force update tactile sensors after each physics step
+        self.scene.left_tactile_sensor.update(
+            dt=self.physics_dt, force_recompute=True
+        )
+        self.scene.right_tactile_sensor.update(
+            dt=self.physics_dt, force_recompute=True
+        )
+        
+        super()._post_physics_step()  # or your existing post-physics logic

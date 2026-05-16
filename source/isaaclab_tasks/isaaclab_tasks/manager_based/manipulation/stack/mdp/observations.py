@@ -17,150 +17,130 @@ from isaaclab.sensors import FrameTransformer
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
+def _get_pos(entity) -> torch.Tensor:
+    """Helper to get the position of a RigidObject or a FrameTransformer."""
+    if isinstance(entity, FrameTransformer):
+        return entity.data.target_pos_w[:, 0, :]
+    return entity.data.root_pos_w
 
-def cube_positions_in_world_frame(
+def _get_quat(entity) -> torch.Tensor:
+    """Helper to get the orientation of a RigidObject or a FrameTransformer."""
+    if isinstance(entity, FrameTransformer):
+        return entity.data.target_quat_w[:, 0, :]
+    return entity.data.root_quat_w
+
+
+def object_positions_in_world_frame(
     env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    cube_3_cfg: SceneEntityCfg = SceneEntityCfg("cube_3"),
+    stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
+    target_cube_cfg: SceneEntityCfg = SceneEntityCfg("target_cube"),
 ) -> torch.Tensor:
     """The position of the cubes in the world frame."""
-    cube_1: RigidObject = env.scene[cube_1_cfg.name]
-    cube_2: RigidObject = env.scene[cube_2_cfg.name]
-    cube_3: RigidObject = env.scene[cube_3_cfg.name]
+    stack_object = env.scene[stack_object_cfg.name]
+    target_cube = env.scene[target_cube_cfg.name]
 
-    return torch.cat((cube_1.data.root_pos_w, cube_2.data.root_pos_w, cube_3.data.root_pos_w), dim=1)
+    return torch.cat((_get_pos(stack_object), _get_pos(target_cube)), dim=1)
 
 
-def instance_randomize_cube_positions_in_world_frame(
+def instance_randomize_object_positions_in_world_frame(
     env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    cube_3_cfg: SceneEntityCfg = SceneEntityCfg("cube_3"),
+    stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
+    target_cube_cfg: SceneEntityCfg = SceneEntityCfg("target_cube"),
 ) -> torch.Tensor:
     """The position of the cubes in the world frame."""
     if not hasattr(env, "rigid_objects_in_focus"):
-        return torch.full((env.num_envs, 9), fill_value=-1)
+        return torch.full((env.num_envs, 6), fill_value=-1)
 
-    cube_1: RigidObjectCollection = env.scene[cube_1_cfg.name]
-    cube_2: RigidObjectCollection = env.scene[cube_2_cfg.name]
-    cube_3: RigidObjectCollection = env.scene[cube_3_cfg.name]
+    stack_object: RigidObjectCollection = env.scene[stack_object_cfg.name]
+    target_cube: RigidObjectCollection = env.scene[target_cube_cfg.name]
 
-    cube_1_pos_w = []
-    cube_2_pos_w = []
-    cube_3_pos_w = []
+    stack_object_pos_w = []
+    target_cube_pos_w = []
     for env_id in range(env.num_envs):
-        cube_1_pos_w.append(cube_1.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][0], :3])
-        cube_2_pos_w.append(cube_2.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][1], :3])
-        cube_3_pos_w.append(cube_3.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][2], :3])
-    cube_1_pos_w = torch.stack(cube_1_pos_w)
-    cube_2_pos_w = torch.stack(cube_2_pos_w)
-    cube_3_pos_w = torch.stack(cube_3_pos_w)
+        stack_object_pos_w.append(stack_object.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][0], :3])
+        target_cube_pos_w.append(target_cube.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][1], :3])
+    stack_object_pos_w = torch.stack(stack_object_pos_w)
+    target_cube_pos_w = torch.stack(target_cube_pos_w)
 
-    return torch.cat((cube_1_pos_w, cube_2_pos_w, cube_3_pos_w), dim=1)
+    return torch.cat((stack_object_pos_w, target_cube_pos_w), dim=1)
 
 
 def cube_orientations_in_world_frame(
     env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    cube_3_cfg: SceneEntityCfg = SceneEntityCfg("cube_3"),
+    stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
+    target_cube_cfg: SceneEntityCfg = SceneEntityCfg("target_cube"),
 ):
     """The orientation of the cubes in the world frame."""
-    cube_1: RigidObject = env.scene[cube_1_cfg.name]
-    cube_2: RigidObject = env.scene[cube_2_cfg.name]
-    cube_3: RigidObject = env.scene[cube_3_cfg.name]
+    stack_object = env.scene[stack_object_cfg.name]
+    target_cube = env.scene[target_cube_cfg.name]
 
-    return torch.cat((cube_1.data.root_quat_w, cube_2.data.root_quat_w, cube_3.data.root_quat_w), dim=1)
+    return torch.cat((_get_quat(stack_object), _get_quat(target_cube)), dim=1)
 
 
 def instance_randomize_cube_orientations_in_world_frame(
     env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    cube_3_cfg: SceneEntityCfg = SceneEntityCfg("cube_3"),
+    stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
+    target_cube_cfg: SceneEntityCfg = SceneEntityCfg("target_cube"),
 ) -> torch.Tensor:
     """The orientation of the cubes in the world frame."""
     if not hasattr(env, "rigid_objects_in_focus"):
-        return torch.full((env.num_envs, 9), fill_value=-1)
+        return torch.full((env.num_envs, 6), fill_value=-1)
 
-    cube_1: RigidObjectCollection = env.scene[cube_1_cfg.name]
-    cube_2: RigidObjectCollection = env.scene[cube_2_cfg.name]
-    cube_3: RigidObjectCollection = env.scene[cube_3_cfg.name]
+    stack_object: RigidObjectCollection = env.scene[stack_object_cfg.name]
+    target_cube: RigidObjectCollection = env.scene[target_cube_cfg.name]
 
-    cube_1_quat_w = []
-    cube_2_quat_w = []
-    cube_3_quat_w = []
+    stack_object_quat_w = []
+    target_cube_quat_w = []
     for env_id in range(env.num_envs):
-        cube_1_quat_w.append(cube_1.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][0], :4])
-        cube_2_quat_w.append(cube_2.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][1], :4])
-        cube_3_quat_w.append(cube_3.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][2], :4])
-    cube_1_quat_w = torch.stack(cube_1_quat_w)
-    cube_2_quat_w = torch.stack(cube_2_quat_w)
-    cube_3_quat_w = torch.stack(cube_3_quat_w)
+        stack_object_quat_w.append(stack_object.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][0], :4])
+        target_cube_quat_w.append(target_cube.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][1], :4])
+    stack_object_quat_w = torch.stack(stack_object_quat_w)
+    target_cube_quat_w = torch.stack(target_cube_quat_w)
 
-    return torch.cat((cube_1_quat_w, cube_2_quat_w, cube_3_quat_w), dim=1)
+    return torch.cat((stack_object_quat_w, target_cube_quat_w), dim=1)
 
 
 def object_obs(
     env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    cube_3_cfg: SceneEntityCfg = SceneEntityCfg("cube_3"),
+    stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
+    target_cube_cfg: SceneEntityCfg = SceneEntityCfg("target_cube"),
     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
 ):
     """
     Object observations (in world frame):
-        cube_1 pos,
-        cube_1 quat,
-        cube_2 pos,
-        cube_2 quat,
-        cube_3 pos,
-        cube_3 quat,
-        gripper to cube_1,
-        gripper to cube_2,
-        gripper to cube_3,
-        cube_1 to cube_2,
-        cube_2 to cube_3,
-        cube_1 to cube_3,
+        stack_object pos,
+        stack_object quat,
+        target_cube pos,
+        target_cube quat,
+        gripper to stack_object,
+        gripper to target_cube,
+        stack_object to target_cube,
     """
-    cube_1: RigidObject = env.scene[cube_1_cfg.name]
-    cube_2: RigidObject = env.scene[cube_2_cfg.name]
-    cube_3: RigidObject = env.scene[cube_3_cfg.name]
+    stack_object = env.scene[stack_object_cfg.name]
+    target_cube = env.scene[target_cube_cfg.name]
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
 
-    cube_1_pos_w = cube_1.data.root_pos_w
-    cube_1_quat_w = cube_1.data.root_quat_w
+    stack_object_pos_w = _get_pos(stack_object)
+    stack_object_quat_w = _get_quat(stack_object)
 
-    cube_2_pos_w = cube_2.data.root_pos_w
-    cube_2_quat_w = cube_2.data.root_quat_w
-
-    cube_3_pos_w = cube_3.data.root_pos_w
-    cube_3_quat_w = cube_3.data.root_quat_w
+    target_cube_pos_w = _get_pos(target_cube)
+    target_cube_quat_w = _get_quat(target_cube)
 
     ee_pos_w = ee_frame.data.target_pos_w[:, 0, :]
-    gripper_to_cube_1 = cube_1_pos_w - ee_pos_w
-    gripper_to_cube_2 = cube_2_pos_w - ee_pos_w
-    gripper_to_cube_3 = cube_3_pos_w - ee_pos_w
+    gripper_to_stack_object = stack_object_pos_w - ee_pos_w
+    gripper_to_target_cube = target_cube_pos_w - ee_pos_w
 
-    cube_1_to_2 = cube_1_pos_w - cube_2_pos_w
-    cube_2_to_3 = cube_2_pos_w - cube_3_pos_w
-    cube_1_to_3 = cube_1_pos_w - cube_3_pos_w
+    stack_object_to_target_cube = stack_object_pos_w - target_cube_pos_w
 
     return torch.cat(
         (
-            cube_1_pos_w - env.scene.env_origins,
-            cube_1_quat_w,
-            cube_2_pos_w - env.scene.env_origins,
-            cube_2_quat_w,
-            cube_3_pos_w - env.scene.env_origins,
-            cube_3_quat_w,
-            gripper_to_cube_1,
-            gripper_to_cube_2,
-            gripper_to_cube_3,
-            cube_1_to_2,
-            cube_2_to_3,
-            cube_1_to_3,
+            stack_object_pos_w - env.scene.env_origins,
+            stack_object_quat_w,
+            target_cube_pos_w - env.scene.env_origins,
+            target_cube_quat_w,
+            gripper_to_stack_object,
+            gripper_to_target_cube,
+            stack_object_to_target_cube,
         ),
         dim=1,
     )
@@ -168,77 +148,56 @@ def object_obs(
 
 def instance_randomize_object_obs(
     env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    cube_3_cfg: SceneEntityCfg = SceneEntityCfg("cube_3"),
+    stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
+    target_cube_cfg: SceneEntityCfg = SceneEntityCfg("target_cube"),
     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
 ):
     """
     Object observations (in world frame):
-        cube_1 pos,
-        cube_1 quat,
-        cube_2 pos,
-        cube_2 quat,
-        cube_3 pos,
-        cube_3 quat,
-        gripper to cube_1,
-        gripper to cube_2,
-        gripper to cube_3,
-        cube_1 to cube_2,
-        cube_2 to cube_3,
-        cube_1 to cube_3,
+        stack_object pos,
+        stack_object quat,
+        target_cube pos,
+        target_cube quat,
+        gripper to stack_object,
+        gripper to target_cube,
+        stack_object to target_cube,
     """
     if not hasattr(env, "rigid_objects_in_focus"):
         return torch.full((env.num_envs, 9), fill_value=-1)
 
-    cube_1: RigidObjectCollection = env.scene[cube_1_cfg.name]
-    cube_2: RigidObjectCollection = env.scene[cube_2_cfg.name]
-    cube_3: RigidObjectCollection = env.scene[cube_3_cfg.name]
+    stack_object: RigidObjectCollection = env.scene[stack_object_cfg.name]
+    target_cube: RigidObjectCollection = env.scene[target_cube_cfg.name]
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
 
-    cube_1_pos_w = []
-    cube_2_pos_w = []
-    cube_3_pos_w = []
-    cube_1_quat_w = []
-    cube_2_quat_w = []
-    cube_3_quat_w = []
+    stack_object_pos_w = []
+    target_cube_pos_w = []
+    stack_object_quat_w = []
+    target_cube_quat_w = []
     for env_id in range(env.num_envs):
-        cube_1_pos_w.append(cube_1.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][0], :3])
-        cube_2_pos_w.append(cube_2.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][1], :3])
-        cube_3_pos_w.append(cube_3.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][2], :3])
-        cube_1_quat_w.append(cube_1.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][0], :4])
-        cube_2_quat_w.append(cube_2.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][1], :4])
-        cube_3_quat_w.append(cube_3.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][2], :4])
-    cube_1_pos_w = torch.stack(cube_1_pos_w)
-    cube_2_pos_w = torch.stack(cube_2_pos_w)
-    cube_3_pos_w = torch.stack(cube_3_pos_w)
-    cube_1_quat_w = torch.stack(cube_1_quat_w)
-    cube_2_quat_w = torch.stack(cube_2_quat_w)
-    cube_3_quat_w = torch.stack(cube_3_quat_w)
+        stack_object_pos_w.append(stack_object.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][0], :3])
+        target_cube_pos_w.append(target_cube.data.object_pos_w[env_id, env.rigid_objects_in_focus[env_id][1], :3])
+        stack_object_quat_w.append(stack_object.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][0], :4])
+        target_cube_quat_w.append(target_cube.data.object_quat_w[env_id, env.rigid_objects_in_focus[env_id][1], :4])
+    stack_object_pos_w = torch.stack(stack_object_pos_w)
+    target_cube_pos_w = torch.stack(target_cube_pos_w)
+    stack_object_quat_w = torch.stack(stack_object_quat_w)
+    target_cube_quat_w = torch.stack(target_cube_quat_w)
 
     ee_pos_w = ee_frame.data.target_pos_w[:, 0, :]
-    gripper_to_cube_1 = cube_1_pos_w - ee_pos_w
-    gripper_to_cube_2 = cube_2_pos_w - ee_pos_w
-    gripper_to_cube_3 = cube_3_pos_w - ee_pos_w
+    gripper_to_stack_object = stack_object_pos_w - ee_pos_w
+    gripper_to_target_cube = target_cube_pos_w - ee_pos_w
 
-    cube_1_to_2 = cube_1_pos_w - cube_2_pos_w
-    cube_2_to_3 = cube_2_pos_w - cube_3_pos_w
-    cube_1_to_3 = cube_1_pos_w - cube_3_pos_w
+    stack_object_to_target_cube = stack_object_pos_w - target_cube_pos_w
 
     return torch.cat(
         (
-            cube_1_pos_w - env.scene.env_origins,
-            cube_1_quat_w,
-            cube_2_pos_w - env.scene.env_origins,
-            cube_2_quat_w,
-            cube_3_pos_w - env.scene.env_origins,
-            cube_3_quat_w,
-            gripper_to_cube_1,
-            gripper_to_cube_2,
-            gripper_to_cube_3,
-            cube_1_to_2,
-            cube_2_to_3,
-            cube_1_to_3,
+            stack_object_pos_w - env.scene.env_origins,
+            stack_object_quat_w,
+            target_cube_pos_w - env.scene.env_origins,
+            target_cube_quat_w,
+            gripper_to_stack_object,
+            gripper_to_target_cube,
+            stack_object_to_target_cube,
         ),
         dim=1,
     )
@@ -300,9 +259,9 @@ def object_grasped(
 
     robot: Articulation = env.scene[robot_cfg.name]
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
-    object: RigidObject = env.scene[object_cfg.name]
+    object = env.scene[object_cfg.name]
 
-    object_pos = object.data.root_pos_w
+    object_pos = _get_pos(object)
     end_effector_pos = ee_frame.data.target_pos_w[:, 0, :]
     pose_diff = torch.linalg.vector_norm(object_pos - end_effector_pos, dim=1)
 
@@ -349,10 +308,10 @@ def object_stacked(
     """Check if an object is stacked by the specified robot."""
 
     robot: Articulation = env.scene[robot_cfg.name]
-    upper_object: RigidObject = env.scene[upper_object_cfg.name]
-    lower_object: RigidObject = env.scene[lower_object_cfg.name]
+    upper_object = env.scene[upper_object_cfg.name]
+    lower_object = env.scene[lower_object_cfg.name]
 
-    pos_diff = upper_object.data.root_pos_w - lower_object.data.root_pos_w
+    pos_diff = _get_pos(upper_object) - _get_pos(lower_object)
     height_dist = torch.linalg.vector_norm(pos_diff[:, 2:], dim=1)
     xy_dist = torch.linalg.vector_norm(pos_diff[:, :2], dim=1)
 
@@ -394,42 +353,35 @@ def object_stacked(
 
 def cube_poses_in_base_frame(
     env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    cube_3_cfg: SceneEntityCfg = SceneEntityCfg("cube_3"),
+    stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
+    target_cube_cfg: SceneEntityCfg = SceneEntityCfg("target_cube"),
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     return_key: Literal["pos", "quat", None] = None,
 ) -> torch.Tensor:
     """The position and orientation of the cubes in the robot base frame."""
 
-    cube_1: RigidObject = env.scene[cube_1_cfg.name]
-    cube_2: RigidObject = env.scene[cube_2_cfg.name]
-    cube_3: RigidObject = env.scene[cube_3_cfg.name]
+    stack_object = env.scene[stack_object_cfg.name]
+    target_cube = env.scene[target_cube_cfg.name]
 
-    pos_cube_1_world = cube_1.data.root_pos_w
-    pos_cube_2_world = cube_2.data.root_pos_w
-    pos_cube_3_world = cube_3.data.root_pos_w
+    pos_stack_object_world = _get_pos(stack_object)
+    pos_target_cube_world = _get_pos(target_cube)
 
-    quat_cube_1_world = cube_1.data.root_quat_w
-    quat_cube_2_world = cube_2.data.root_quat_w
-    quat_cube_3_world = cube_3.data.root_quat_w
+    quat_stack_object_world = _get_quat(stack_object)
+    quat_target_cube_world = _get_quat(target_cube)
 
     robot: Articulation = env.scene[robot_cfg.name]
     root_pos_w = robot.data.root_pos_w
     root_quat_w = robot.data.root_quat_w
 
-    pos_cube_1_base, quat_cube_1_base = math_utils.subtract_frame_transforms(
-        root_pos_w, root_quat_w, pos_cube_1_world, quat_cube_1_world
+    pos_stack_object_base, quat_stack_object_base = math_utils.subtract_frame_transforms(
+        root_pos_w, root_quat_w, pos_stack_object_world, quat_stack_object_world
     )
-    pos_cube_2_base, quat_cube_2_base = math_utils.subtract_frame_transforms(
-        root_pos_w, root_quat_w, pos_cube_2_world, quat_cube_2_world
-    )
-    pos_cube_3_base, quat_cube_3_base = math_utils.subtract_frame_transforms(
-        root_pos_w, root_quat_w, pos_cube_3_world, quat_cube_3_world
+    pos_target_cube_base, quat_target_cube_base = math_utils.subtract_frame_transforms(
+        root_pos_w, root_quat_w, pos_target_cube_world, quat_target_cube_world
     )
 
-    pos_cubes_base = torch.cat((pos_cube_1_base, pos_cube_2_base, pos_cube_3_base), dim=1)
-    quat_cubes_base = torch.cat((quat_cube_1_base, quat_cube_2_base, quat_cube_3_base), dim=1)
+    pos_cubes_base = torch.cat((pos_stack_object_base, pos_target_cube_base), dim=1)
+    quat_cubes_base = torch.cat((quat_stack_object_base, quat_target_cube_base), dim=1)
 
     if return_key == "pos":
         return pos_cubes_base
@@ -441,50 +393,40 @@ def cube_poses_in_base_frame(
 
 def object_abs_obs_in_base_frame(
     env: ManagerBasedRLEnv,
-    cube_1_cfg: SceneEntityCfg = SceneEntityCfg("cube_1"),
-    cube_2_cfg: SceneEntityCfg = SceneEntityCfg("cube_2"),
-    cube_3_cfg: SceneEntityCfg = SceneEntityCfg("cube_3"),
+    stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
+    target_cube_cfg: SceneEntityCfg = SceneEntityCfg("target_cube"),
     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
     robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ):
     """
     Object Abs observations (in base frame): remove the relative observations,
     and add abs gripper pos and quat in robot base frame
-        cube_1 pos,
-        cube_1 quat,
-        cube_2 pos,
-        cube_2 quat,
-        cube_3 pos,
-        cube_3 quat,
+        stack_object pos,
+        stack_object quat,
+        target_cube pos,
+        target_cube quat,
         gripper pos,
         gripper quat,
     """
-    cube_1: RigidObject = env.scene[cube_1_cfg.name]
-    cube_2: RigidObject = env.scene[cube_2_cfg.name]
-    cube_3: RigidObject = env.scene[cube_3_cfg.name]
+    stack_object = env.scene[stack_object_cfg.name]
+    target_cube = env.scene[target_cube_cfg.name]
     ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
     robot: Articulation = env.scene[robot_cfg.name]
 
     root_pos_w = robot.data.root_pos_w
     root_quat_w = robot.data.root_quat_w
 
-    cube_1_pos_w = cube_1.data.root_pos_w
-    cube_1_quat_w = cube_1.data.root_quat_w
+    stack_object_pos_w = _get_pos(stack_object)
+    stack_object_quat_w = _get_quat(stack_object)
 
-    cube_2_pos_w = cube_2.data.root_pos_w
-    cube_2_quat_w = cube_2.data.root_quat_w
+    target_cube_pos_w = _get_pos(target_cube)
+    target_cube_quat_w = _get_quat(target_cube)
 
-    cube_3_pos_w = cube_3.data.root_pos_w
-    cube_3_quat_w = cube_3.data.root_quat_w
-
-    pos_cube_1_base, quat_cube_1_base = math_utils.subtract_frame_transforms(
-        root_pos_w, root_quat_w, cube_1_pos_w, cube_1_quat_w
+    pos_stack_object_base, quat_stack_object_base = math_utils.subtract_frame_transforms(
+        root_pos_w, root_quat_w, stack_object_pos_w, stack_object_quat_w
     )
-    pos_cube_2_base, quat_cube_2_base = math_utils.subtract_frame_transforms(
-        root_pos_w, root_quat_w, cube_2_pos_w, cube_2_quat_w
-    )
-    pos_cube_3_base, quat_cube_3_base = math_utils.subtract_frame_transforms(
-        root_pos_w, root_quat_w, cube_3_pos_w, cube_3_quat_w
+    pos_target_cube_base, quat_target_cube_base = math_utils.subtract_frame_transforms(
+        root_pos_w, root_quat_w, target_cube_pos_w, target_cube_quat_w
     )
 
     ee_pos_w = ee_frame.data.target_pos_w[:, 0, :]
@@ -493,12 +435,10 @@ def object_abs_obs_in_base_frame(
 
     return torch.cat(
         (
-            pos_cube_1_base,
-            quat_cube_1_base,
-            pos_cube_2_base,
-            quat_cube_2_base,
-            pos_cube_3_base,
-            quat_cube_3_base,
+            pos_stack_object_base,
+            quat_stack_object_base,
+            pos_target_cube_base,
+            quat_target_cube_base,
             ee_pos_base,
             ee_quat_base,
         ),

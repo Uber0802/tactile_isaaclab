@@ -5,6 +5,7 @@
 import isaaclab.sim as sim_utils
 
 
+from isaaclab.assets import DeformableObjectCfg
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -14,10 +15,11 @@ from isaaclab.sensors import FrameTransformerCfg, TiledCameraCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import OffsetCfg
 from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
-from isaaclab.sim import MeshCollisionPropertiesCfg, SDFMeshPropertiesCfg
+from isaaclab_tasks.direct.factory.factory_env_cfg import ASSET_DIR
 from isaaclab.utils import configclass
 
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
+from isaaclab_tasks.direct.factory.factory_tasks_cfg import Peg8mm
 
 from isaaclab_assets.sensors import GELSIGHT_R15_CFG
 from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensorCfg
@@ -31,6 +33,7 @@ from isaaclab_tasks.manager_based.manipulation.stack.stack_env_cfg import Observ
 ##
 from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
 from isaaclab_assets.robots.franka import FRANKA_PANDA_CFG, FRANKA_PANDA_HIGH_PD_CFG  # isort: skip
+from isaaclab.assets import ArticulationCfg
 
 LOCAL_PEG_INSERT_ROBOT_USD_PATH = "./franka_gelsight.usd"
 LOCAL_BLUE_BLOCK_USD  = "./assets/Props/blue_block_sdf.usd"
@@ -97,7 +100,7 @@ class EventCfg:
 
 
 @configclass
-class FrankaGelsightEnvCfg(StackEnvCfg):
+class FrankaStackToybearEnvCfg(StackEnvCfg):
     """Configuration for the Franka Gelsight Environment."""
 
     # Override the observations and rewards
@@ -212,14 +215,12 @@ class FrankaGelsightEnvCfg(StackEnvCfg):
         )
 
         # Set each stacking cube deterministically
-        self.scene.cube_1 = RigidObjectCfg(
+        self.scene.cube_1 = DeformableObjectCfg(
             prim_path="{ENV_REGEX_NS}/Cube_1",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.4, 0.0, 0.0203], rot=[1, 0, 0, 0]),
+            init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.5, 0, 0.05), rot=(0.707, 0, 0, 0.707)),
             spawn=UsdFileCfg(
-                usd_path=LOCAL_BLUE_BLOCK_USD,
-                scale=(1.0, 1.0, 1.0),
-                rigid_props=cube_properties,
-                semantic_tags=[("class", "cube_1")],
+                usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Objects/Teddy_Bear/teddy_bear.usd",
+                scale=(0.01, 0.01, 0.01),
             ),
         )
         self.scene.cube_2 = RigidObjectCfg(

@@ -185,8 +185,16 @@ def randomize_object_pose(
 
             # Write pose to simulation
             pose_tensor = torch.tensor([pose_list[i]], device=env.device)
+            if "z" not in pose_range:
+                pose_tensor[:, 2] = asset.data.default_root_state[cur_env, 2]
+                
             positions = pose_tensor[:, 0:3] + env.scene.env_origins[cur_env, 0:3]
             orientations = math_utils.quat_from_euler_xyz(pose_tensor[:, 3], pose_tensor[:, 4], pose_tensor[:, 5])
+            
+            # Update the default root state so displacement-based rewards/terminations use the new randomized position
+            asset.data.default_root_state[cur_env, 0:3] = pose_tensor[0, 0:3]
+            asset.data.default_root_state[cur_env, 3:7] = orientations[0]
+
             asset.write_root_pose_to_sim(
                 torch.cat([positions, orientations], dim=-1), env_ids=torch.tensor([cur_env], device=env.device)
             )

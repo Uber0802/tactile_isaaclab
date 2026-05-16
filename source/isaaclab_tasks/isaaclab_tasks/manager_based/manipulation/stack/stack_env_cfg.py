@@ -83,7 +83,7 @@ class ObservationsCfg:
         joint_pos = ObsTerm(func=mdp.joint_pos_rel)
         joint_vel = ObsTerm(func=mdp.joint_vel_rel)
         object = ObsTerm(func=mdp.object_obs)
-        cube_positions = ObsTerm(func=mdp.cube_positions_in_world_frame)
+        cube_positions = ObsTerm(func=mdp.object_positions_in_world_frame)
         cube_orientations = ObsTerm(func=mdp.cube_orientations_in_world_frame)
         eef_pos = ObsTerm(func=mdp.ee_frame_pos)
         eef_quat = ObsTerm(func=mdp.ee_frame_quat)
@@ -101,73 +101,39 @@ class ObservationsCfg:
             self.enable_corruption = False
             self.concatenate_terms = False
 
-    @configclass
-    class SubtaskCfg(ObsGroup):
-        """Observations for subtask group."""
-
-        grasp_1 = ObsTerm(
-            func=mdp.object_grasped,
-            params={
-                "robot_cfg": SceneEntityCfg("robot"),
-                "ee_frame_cfg": SceneEntityCfg("ee_frame"),
-                "object_cfg": SceneEntityCfg("cube_2"),
-            },
-        )
-        stack_1 = ObsTerm(
-            func=mdp.object_stacked,
-            params={
-                "robot_cfg": SceneEntityCfg("robot"),
-                "upper_object_cfg": SceneEntityCfg("cube_2"),
-                "lower_object_cfg": SceneEntityCfg("cube_1"),
-            },
-        )
-        grasp_2 = ObsTerm(
-            func=mdp.object_grasped,
-            params={
-                "robot_cfg": SceneEntityCfg("robot"),
-                "ee_frame_cfg": SceneEntityCfg("ee_frame"),
-                "object_cfg": SceneEntityCfg("cube_3"),
-            },
-        )
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = False
-
     # observation groups
     policy: PolicyCfg = PolicyCfg()
     rgb_camera: RGBCameraPolicyCfg = RGBCameraPolicyCfg()
-    subtask_terms: SubtaskCfg = SubtaskCfg()
 
 @configclass
 class RewardsCfg:
     """Reward terms for stacking."""
 
-    ee_to_blue_cube = RewTerm(
-        func=mdp.ee_to_cube_distance_reward,
+    ee_to_stack_object = RewTerm(
+        func=mdp.ee_to_stack_object_distance_reward,
         params={
             "ee_frame_cfg": SceneEntityCfg("ee_frame"),
-            "cube_cfg": SceneEntityCfg("cube_1"),
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
             "max_distance": 0.25,
             "max_reward": 1.0,
         },
         weight=0.5,
     )
 
-    blue_cube_z_reward_exp = RewTerm(
-        func=mdp.cube_z_reward_exp,
+    stack_object_z_reward_exp = RewTerm(
+        func=mdp.stack_object_z_reward_exp,
         params={
-            "cube_1_cfg": SceneEntityCfg("cube_1"),
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
         },
         weight=1.0,
     )
 
-    blue_cube_xy_precision = RewTerm(
-        func=mdp.cube_precision_xy_reward,
+    stack_object_xy_precision = RewTerm(
+        func=mdp.stack_object_precision_xy_reward,
         params={
-            "cube_1_cfg": SceneEntityCfg("cube_1"),
-            "cube_2_cfg": SceneEntityCfg("cube_2"),
-            "stack_height_offset": 0.0406,
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
+            "target_cube_cfg": SceneEntityCfg("target_cube"), 
+            "stack_height_offset": 0.0468,
             "height_tolerance": 0.005,
             "max_xy_distance": 0.16,
             "max_reward": 0.1,
@@ -175,12 +141,12 @@ class RewardsCfg:
         weight=1.0,
     )
 
-    blue_cube_xy_precision_exp = RewTerm(
-        func=mdp.cube_precision_xy_reward_exp,
+    stack_object_xy_precision_exp = RewTerm(
+        func=mdp.stack_object_precision_xy_reward_exp,
         params={
-            "cube_1_cfg": SceneEntityCfg("cube_1"),
-            "cube_2_cfg": SceneEntityCfg("cube_2"),
-            "stack_height_offset": 0.0406,
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
+            "target_cube_cfg": SceneEntityCfg("target_cube"),
+            "stack_height_offset": 0.0468,
             "height_tolerance": 0.005,
             "distance_offset": 0.1,
             "decay_rate": 30.0,
@@ -188,13 +154,12 @@ class RewardsCfg:
         weight=1.0,
     )
 
-    red_cube_home_penalty = RewTerm(
-        func=mdp.cube_original_xy_penalty,
+    target_cube_home_penalty = RewTerm(
+        func=mdp.target_cube_original_xy_penalty,
         params={
-            "cube_cfg": SceneEntityCfg("cube_2"),
-            "cube_1_cfg": SceneEntityCfg("cube_1"),
-            "cube_2_cfg": SceneEntityCfg("cube_2"),
-            "stack_height_offset": 0.0406,
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
+            "target_cube_cfg": SceneEntityCfg("target_cube"),
+            "stack_height_offset": 0.0468,
             "height_tolerance": 0.005,
             "penalty_scale": 5.0,
         },
@@ -210,11 +175,11 @@ class RewardsCfg:
     )
 
     stack_success = RewTerm(
-        func=mdp.cubes_stacked,
+        func=mdp.stack_success,
         params={
             "robot_cfg": SceneEntityCfg("robot"),
-            "cube_1_cfg": SceneEntityCfg("cube_1"),
-            "cube_2_cfg": SceneEntityCfg("cube_2"),
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
+            "target_cube_cfg": SceneEntityCfg("target_cube"),
         },
         weight=10.0,
     )
@@ -222,7 +187,6 @@ class RewardsCfg:
     # # Small per-step penalties to discourage waiting or issuing large actions.
     time_penalty = RewTerm(func=mdp.is_alive, weight=-0.002)
     action_penalty = RewTerm(func=mdp.action_l2, weight=-0.001)
-    # rewind_tactile_reward = RewTerm(func=mdp.rewind_tactile_reward, weight=0.2)
 
 @configclass
 class TerminationsCfg:
@@ -230,31 +194,22 @@ class TerminationsCfg:
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
-    cube_1_dropping = DoneTerm(
-        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("cube_1")}
+    stack_object_dropping = DoneTerm(
+        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("stack_object")}
     )
 
-    cube_2_dropping = DoneTerm(
-        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("cube_2")}
+    target_cube_dropping = DoneTerm(
+        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("target_cube")}
     )
 
-    cube_3_dropping = DoneTerm(
-        func=mdp.root_height_below_minimum, params={"minimum_height": -0.05, "asset_cfg": SceneEntityCfg("cube_3")}
-    )
-
-    cube_1_out_of_bounds = DoneTerm(
+    stack_object_out_of_bounds = DoneTerm(
         func=mdp.root_horizontal_displacement_exceeded,
-        params={"max_displacement": 0.4, "asset_cfg": SceneEntityCfg("cube_1")},
+        params={"max_displacement": 0.4, "asset_cfg": SceneEntityCfg("stack_object")},
     )
 
-    cube_2_out_of_bounds = DoneTerm(
+    target_cube_out_of_bounds = DoneTerm(
         func=mdp.root_horizontal_displacement_exceeded,
-        params={"max_displacement": 0.4, "asset_cfg": SceneEntityCfg("cube_2")},
-    )
-
-    cube_3_out_of_bounds = DoneTerm(
-        func=mdp.root_horizontal_displacement_exceeded,
-        params={"max_displacement": 0.4, "asset_cfg": SceneEntityCfg("cube_3")},
+        params={"max_displacement": 0.4, "asset_cfg": SceneEntityCfg("target_cube")},
     )
 
     # success = DoneTerm(func=mdp.cubes_stacked)
@@ -304,5 +259,4 @@ class StackEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physx.friction_correlation_distance = 0.00625
 
         self.observations.rgb_camera = None
-        self.observations.subtask_terms = None
         self.observations.policy.concatenate_terms = True

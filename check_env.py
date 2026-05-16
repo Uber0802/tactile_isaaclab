@@ -12,7 +12,9 @@ simulation_app = launcher.app
 import isaaclab.utils.math as math_utils
 from isaaclab.assets import Articulation, RigidObject
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.manager_based.manipulation.stack.config.franka.stack_gelsight_env_cfg import FrankaGelsightEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.stack_box.stack_box_env_cfg import FrankaStackBoxEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.stack_peg.stack_peg_env_cfg import FrankaStackPegEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.stack_toybear.stack_toybear_env_cfg import FrankaStackToybearEnvCfg
 from isaaclab_contrib.sensors.tacsl_sensor.visuotactile_render import compute_tactile_shear_image
 
 # --- IK and Teleop imports ---
@@ -54,7 +56,7 @@ def run_manual_test(env):
     2: Close gripper
     3: Lift box
     """
-    for cube_name in ["cube_1", "cube_2", "cube_3"]:
+    for cube_name in ["stack_object", "target_cube"]:
         cube_asset = env.unwrapped.scene[cube_name]
         materials = cube_asset.root_physx_view.get_material_properties()
         mass = cube_asset.root_physx_view.get_masses() 
@@ -122,12 +124,12 @@ def run_manual_test(env):
             actions = torch.zeros(env.unwrapped.num_envs, env.unwrapped.action_manager.total_action_dim, device=env.unwrapped.device)
 
             # Get box and gripper positions directly from the physics scene state
-            box_pos = env.unwrapped.scene["cube_1"].data.root_pos_w[:, 0:3] - env.unwrapped.scene.env_origins
+            stack_object_pos = env.unwrapped.scene["stack_object"].data.root_pos_w[:, 0:3] - env.unwrapped.scene.env_origins
             gripper_pos = env.unwrapped.scene["ee_frame"].data.target_pos_w[:, 0, 0:3] - env.unwrapped.scene.env_origins
 
             # 2. Simple State Machine Logic
             if state == 0: # Move above box
-                target_pos = box_pos + torch.tensor([0.0, 0.0, 0.1], device=env.unwrapped.device)
+                target_pos = stack_object_pos + torch.tensor([0.0, 0.0, 0.1], device=env.unwrapped.device)
                 actions[:, 0:3] = (target_pos - gripper_pos) * 5.0 # P-control to target
                 actions[:, -1] = 1.0 # Keep gripper open
                 if torch.norm(target_pos - gripper_pos) < 0.02: 
@@ -135,9 +137,9 @@ def run_manual_test(env):
                     print("Auto State: Lower to box")
 
             elif state == 1: # Lower to box
-                actions[:, 0:3] = (box_pos - gripper_pos) * 5.0
+                actions[:, 0:3] = (stack_object_pos - gripper_pos) * 5.0
                 actions[:, -1] = 1.0 
-                if torch.norm(box_pos - gripper_pos) < 0.01: 
+                if torch.norm(stack_object_pos - gripper_pos) < 0.01: 
                     state = 2
                     print("Auto State: Close gripper")
 
@@ -160,7 +162,15 @@ def run_manual_test(env):
         global_step += 1
         if global_step % 50 == 0:
             print(f"\n--- Step {global_step} Rewards ---")
+            stack_obj_pos = env.unwrapped.scene["stack_object"].data.root_pos_w[0, :3] - env.unwrapped.scene.env_origins[0, :3]
+            target_cube_pos = env.unwrapped.scene["target_cube"].data.root_pos_w[0, :3] - env.unwrapped.scene.env_origins[0, :3]
+            target_cube_pos = env.unwrapped.scene["target_cube"].data.root_pos_w[0, :3] - env.unwrapped.scene.env_origins[0, :3]
+            stack_obj_default = env.unwrapped.scene["stack_object"].data.default_root_state[0, :3]
+            print(f"  stack_object pos: {stack_obj_pos.tolist()}, default: {stack_obj_default.tolist()}")
+            print(f"  target_cube pos: {target_cube_pos.tolist()}")
+
             dt = env.unwrapped.step_dt
+            # env.reset()
             for term_idx, term_name in enumerate(env.unwrapped.reward_manager.active_terms):
                 # _step_reward stores the reward rate (reward / dt), so we multiply by dt to get the actual value added
                 term_reward = env.unwrapped.reward_manager._step_reward[0, term_idx].item() * dt
@@ -172,7 +182,7 @@ def run_manual_test(env):
 def main():
     print("Creating Isaac-Stack-Cube-Franka-Gelsight-v0 environment with IK control...")
     
-    env_cfg = FrankaGelsightEnvCfg()
+    env_cfg = FrankaStackBoxEnvCfg()
     env_cfg.scene.num_envs = 1
     env_cfg.episode_length_s = 1000.0 # Extend episode length to 1000 seconds for manual debugging
     
