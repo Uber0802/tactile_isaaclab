@@ -337,11 +337,28 @@ class ForgePegInsertPickPlaceEnv(ForgeEnv):
         )
         r_descent = xy_aligned * z_progress
 
+        # (5) Continuous XY alignment — dense horizontal gradient toward the destination.
+        # Gated on `r_lift` so it can't be farmed by sliding the peg along the table.
+        xy_coarse = torch.exp(-peg_to_dest_xy / self.cfg_task.xy_coarse_scale)
+        r_xy_align = r_lift * xy_coarse
+
+        # (6) Z-descent bridge — coarse z gradient gated by lift × xy_coarse, mirrors
+        # `r_z_descend` in forge_nutpickplace_env. Pulls peg DOWN while it's already
+        # lifted and xy-roughly-aligned but still 2–10 cm above destination.
+        # Without this, `r_descent` (1cm sharp) is exp(-z/0.01)≈0 for z>3cm so the
+        # policy has no descent gradient during transport — XY-aligned then plateau.
+        z_progress_coarse = torch.exp(
+            -torch.clamp(peg_above_dest_z, min=0.0) / self.cfg_task.z_coarse_scale
+        )
+        r_z_descend = r_lift * xy_coarse * z_progress_coarse
+
         rew_buf = (
             rew_buf
             + self.cfg_task.approach_reward_scale * r_approach
             + self.cfg_task.lift_reward_scale * r_lift
             + r_peg_speed_penalty
+            + self.cfg_task.xy_align_reward_scale * r_xy_align
+            + self.cfg_task.z_align_reward_scale * r_z_descend
             + self.cfg_task.descent_reward_scale * r_descent
         )
 
@@ -392,6 +409,10 @@ class ForgePegInsertPickPlaceEnv(ForgeEnv):
         self.extras["logs_peg_speed_max"] = peg_speed.max()
         self.extras["logs_rew_peg_speed_penalty"] = r_peg_speed_penalty.mean()
         self.extras["logs_rew_descent"] = r_descent.mean()
+        self.extras["logs_rew_z_descend"] = r_z_descend.mean()
+        self.extras["logs_rew_xy_align"] = r_xy_align.mean()
+        self.extras["logs_xy_coarse_mean"] = xy_coarse.mean()
+        self.extras["logs_z_coarse_mean"] = z_progress_coarse.mean()
         self.extras["logs_xy_aligned_frac"] = xy_aligned.mean()
 
         # Periodic text log so we can tail metrics from stderr / the log file.
@@ -415,6 +436,10 @@ class ForgePegInsertPickPlaceEnv(ForgeEnv):
                 f"pegXY2dest(min/mean)={peg_to_dest_xy.min().item():.3f}/{peg_to_dest_xy.mean().item():.3f} "
                 f"pegZabvDest(min/mean)={peg_above_dest_z.min().item():+.4f}/{peg_above_dest_z.mean().item():+.4f} "
                 f"descent={r_descent.mean().item():.3f} "
+                f"zDescR={r_z_descend.mean().item():.3f} "
+                f"zCoarse={z_progress_coarse.mean().item():.3f} "
+                f"xyAlignR={r_xy_align.mean().item():.3f} "
+                f"xyCoarse={xy_coarse.mean().item():.3f} "
                 f"xyAlign%={xy_aligned.mean().item():.2f} "
                 f"grasp%={grasped.mean().item():.2f} "
                 f"lifted%={pick_success.mean().item():.2f} "

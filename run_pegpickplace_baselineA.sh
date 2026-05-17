@@ -3,9 +3,13 @@
 CACHE_DIR="/tmp/${USER}_${HOSTNAME%%.*}_isaac"
 mkdir -p "$CACHE_DIR/tmp" "$CACHE_DIR/cache/ov" "$CACHE_DIR/torch/triton" "$CACHE_DIR/torch/inductor"
 
-# Baseline A (default no-op obs/state order) + tactile reward shaping.
-# The FORGE_TACTILE_REWARD_* env vars activate _init_tactile_reward() in
-# forge_env.py, which adds the ReWiND progress scalar (scaled) to rew_buf.
+# Baseline A (no tactile in obs/state) + tactile force-field dump for downstream
+# model training. Two hydra overrides:
+#   full_experiment_name=PegInsert_PickPlace_baselineA  → ckpts go to
+#     logs/rl_games/ForgePegPickPlace/PegInsert_PickPlace_baselineA/nn/
+#     instead of the default `test/` dir which gets clobbered by B/B2/single_pos.
+#   save_frequency=20  → ckpt every 20 epochs (vs default 100) so curriculum
+#     rollout has fine-grained skill-level snapshots.
 TMPDIR="$CACHE_DIR/tmp" \
 XDG_CACHE_HOME="$CACHE_DIR/cache" \
 OMNI_KIT_CACHE_DIR="$CACHE_DIR/cache/ov" \
@@ -18,11 +22,13 @@ FORGE_TACTILE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/pegpickplace_baselineA 
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
     --baseline A \
-    --num_envs 256 \
+    --headless \
+    --num_envs 512 \
     --max_iterations 10000 \
     --enable_cameras \
     --track \
-    --headless \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name PegInsert_PickPlace_baselineA_new
+    --wandb-name PegInsert_PickPlace_baselineA \
+    agent.params.config.full_experiment_name=PegInsert_PickPlace_baselineA \
+    agent.params.config.save_frequency=20
