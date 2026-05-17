@@ -13,16 +13,18 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
-FORGE_TACTILE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/pegpickplace_baselineA \
+FORGE_TACTILE_REWARD_CKPT=/mnt/lab-tank/uber/Tactile-Reward/exp_taskcompare/gear_scratch/gear_scratch_epoch25.pth \
+FORGE_TACTILE_REWARD_SCALE=0.1 \
+FORGE_TACTILE_REWARD_INSTRUCTION="pick up the gear and mesh it onto the shaft" \
+FORGE_TACTILE_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-party/Tactile-ReWiND \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
-    --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
+    --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
     --baseline A \
+    --headless \
     --num_envs 256 \
     --max_iterations 10000 \
     --enable_cameras \
     --track \
-    --headless \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name PegInsert_PickPlace_baselineA_new
+    --wandb-name GearMesh_PickPlace_baselineTacReward

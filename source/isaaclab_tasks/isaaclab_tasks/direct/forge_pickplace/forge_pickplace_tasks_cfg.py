@@ -73,12 +73,31 @@ class ForgePegInsertPickPlace(ForgePegInsert):
 
     # Descent reward (hard-gated on XY alignment): once the peg is XY-aligned within
     # `descent_xy_threshold` of the destination centre, reward descending the peg toward
-    # the destination base. Outside the gate this term is strictly 0 so it can't distort
-    # the reach/lift phase the 4/19 policy already learned.
+    # the destination base. Widened from 1 cm → 4 cm so descent gradient appears well
+    # before the policy stumbles into a tight gate; the continuous `r_xy_align` below
+    # supplies the actual horizontal pull.
     #   r_descent = [xy_dist < thresh] * exp(-max(0, z_above_dest) / descent_z_scale)
     descent_reward_scale: float = 3.0
-    descent_xy_threshold: float = 0.01  # 1 cm — policy must first line up XY
+    descent_xy_threshold: float = 0.04
     descent_z_scale: float = 0.01       # at 3 cm → 0.05, at 1 cm → 0.37, at 0 → 1
+
+    # Continuous XY-alignment reward (mirrors GearMesh PickPlace). Provides a dense
+    # horizontal gradient pulling the peg toward the destination during the transport
+    # phase, since Baseline A's only prior xy signal was the binary descent gate.
+    # Gated on `r_lift` so the policy can't farm it by sliding the peg along the table.
+    #   r_xy_align = r_lift * exp(-peg_to_dest_xy / xy_coarse_scale)
+    xy_align_reward_scale: float = 1.5
+    xy_coarse_scale: float = 0.05  # exp(-d/0.05): d=5 cm → 0.37, d=10 cm → 0.14
+
+    # Z-descent bridge (mirrors NutThread PickPlace `r_z_descend`). The sharp
+    # `r_descent` above only fires within ~1 cm of the destination z, so during
+    # transport (peg lifted, xy-roughly-aligned, but still 2–10 cm above the hole)
+    # the policy has no descent gradient — it XY-aligns and then plateaus. This
+    # coarse term gives a smooth downward pull from ~10 cm. Gated on `r_lift *
+    # xy_coarse` so it can't be farmed by an unlifted or unaligned peg.
+    #   r_z_descend = r_lift * xy_coarse * exp(-max(0, z_above_dest) / z_coarse_scale)
+    z_align_reward_scale: float = 1.5
+    z_coarse_scale: float = 0.05  # exp(-z/0.05): z=5 cm → 0.37, z=10 cm → 0.14
 
     source_fixed_asset: ArticulationCfg = ArticulationCfg(
         prim_path="/World/envs/env_.*/SourceFixedAsset",

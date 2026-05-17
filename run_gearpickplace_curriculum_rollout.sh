@@ -12,7 +12,7 @@ set -e
 CACHE_DIR="/tmp/${USER}_${HOSTNAME%%.*}_isaac"
 mkdir -p "$CACHE_DIR/tmp" "$CACHE_DIR/cache/ov" "$CACHE_DIR/torch/triton" "$CACHE_DIR/torch/inductor"
 
-CKPTS_DIR=/mnt/home/tactile/tactile_isaaclab/logs/rl_games/ForgeGearPickPlace/GearMesh_PickPlace_baselineA/nn
+CKPTS_DIR=/mnt/home/uber/tactile_isaaclab/logs/rl_games/ForgeGearPickPlace/GearMesh_PickPlace_baselineA/nn
 BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/gearpickplace_curriculum
 
 # Curriculum spectrum: sample 1-out-of-every-STRIDE saved snapshots so we hit
@@ -28,7 +28,7 @@ done
 
 # Per-ckpt rollout budget. One PPO iter ≈ horizon_length × num_envs steps.
 # Tune ITERS_PER_CKPT for the trajectory count you want per skill level.
-ITERS_PER_CKPT=50
+ITERS_PER_CKPT=20
 SIGMA=0.3   # mild action noise so the 128 envs aren't identical; lower=more deterministic
 
 for ckpt_name in "${CKPTS[@]}"; do
@@ -39,9 +39,15 @@ for ckpt_name in "${CKPTS[@]}"; do
     fi
     # Label = ep_NNN portion of the filename, e.g. ep_300
     label=$(echo "$ckpt_name" | grep -oE 'ep_[0-9]+')
+    ckpt_epoch=${label#ep_}
+    # rl_games loads the ckpt's epoch counter on restore, so `--max_iterations N`
+    # (which sets `max_epochs = N`, absolute) would exit immediately if N <=
+    # ckpt_epoch. Compute the absolute target so we actually run ITERS_PER_CKPT
+    # PPO iters relative to the loaded ckpt.
+    max_iters_abs=$((ckpt_epoch + ITERS_PER_CKPT))
     save_dir="$BASE_SAVE_DIR/$label"
     mkdir -p "$save_dir"
-    echo "==== [$label] ckpt=$ckpt_name → $save_dir ===="
+    echo "==== [$label] ckpt=$ckpt_name → $save_dir  (max_epochs=$max_iters_abs) ===="
 
     TMPDIR="$CACHE_DIR/tmp" \
     XDG_CACHE_HOME="$CACHE_DIR/cache" \
@@ -51,16 +57,22 @@ for ckpt_name in "${CKPTS[@]}"; do
     TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
     TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
     FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
+    FORGE_SAVE_TACTILE_ALL_ENVS=1 \
     FORGE_TACTILE_SAVE_DIR="$save_dir" \
     ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
         --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
         --baseline single_pos \
         --checkpoint "$ckpt_path" \
         --num_envs 128 \
-        --max_iterations $ITERS_PER_CKPT \
+        --max_iterations $max_iters_abs \
         --sigma $SIGMA \
         --enable_cameras \
-        --headless
+        --headless \
+        agent.params.config.learning_rate=0 \
+        agent.params.config.lr_schedule=fixed \
+        agent.params.config.save_frequency=999999 \
+        agent.params.config.save_best_after=999999 \
+        agent.params.config.full_experiment_name=GearMesh_PickPlace_curriculum_rollout_tmp
 done
 
 echo "==== done. dataset root: $BASE_SAVE_DIR ===="

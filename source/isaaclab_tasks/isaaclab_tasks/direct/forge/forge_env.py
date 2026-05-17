@@ -107,11 +107,24 @@ class ForgeEnv(FactoryEnv):
         self.rot_threshold = self.default_rot_threshold.clone()
 
         self._save_tactile_force_field = os.getenv("FORGE_SAVE_TACTILE_FORCE_FIELD", "0") == "1"
+        # Opt-in multi-env tactile capture: every env maintains its own episode
+        # buffer instead of only buffering the single hard-coded target env.
+        # Unset/0 keeps the legacy behavior so existing baseline-A/B/B2 runs are
+        # bit-identical. Used by the curriculum-rollout scripts to multiply
+        # trajectory yield by num_envs.
+        self._save_tactile_all_envs = os.getenv("FORGE_SAVE_TACTILE_ALL_ENVS", "0") == "1"
         self._tactile_save_interval = max(1, int(os.getenv("FORGE_TACTILE_SAVE_INTERVAL", "1")))
         self._tactile_save_dir = os.getenv("FORGE_TACTILE_SAVE_DIR", "./tactile_dataset")
+        # Safety cap for total buffered frames across per-env buffers (multi-env
+        # mode only). 5e5 frames * 6 KB ≈ 3 GB upper bound.
+        self._tactile_max_buffer_frames = int(os.getenv("FORGE_TACTILE_MAX_BUFFER_FRAMES", "500000"))
         self._tactile_saved_episode_count = 0
         self._tactile_step_in_episode = 0
-        self._tactile_episode_frames = []
+        if self._save_tactile_force_field and self._save_tactile_all_envs:
+            self._tactile_episode_frames = [[] for _ in range(self.num_envs)]
+            self._tactile_step_in_episode_per_env = [0] * self.num_envs
+        else:
+            self._tactile_episode_frames = []
         if self._save_tactile_force_field:
             os.makedirs(self._tactile_save_dir, exist_ok=True)
 
@@ -132,6 +145,14 @@ class ForgeEnv(FactoryEnv):
             FORGE_TACTILE_REWARD_SCALE        (float, default 1.0)
             FORGE_TACTILE_REWARD_INSTRUCTION  (default "grasp peg and insert to another hole")
             FORGE_TACTILE_REWARD_ROOT         (path to Tactile-ReWiND repo for sys.path)
+            FORGE_TACTILE_REWARD_HISTORY      (int, default = self.max_episode_length):
+                                              rolling-buffer length; linspace-subsampled
+                                              down to max_length when fed to the model —
+                                              matches training's `_sample_forward +
+                                              _resize` stride behavior. Default matches
+                                              the full episode so a slice that ends at
+                                              episode-end approximates the `start=0,
+                                              end=N` training case (progress → 1).
         """
         self._tactile_reward_enabled = False
         ckpt = os.getenv("FORGE_TACTILE_REWARD_CKPT", "").strip()
@@ -155,12 +176,20 @@ class ForgeEnv(FactoryEnv):
         cfg = state.get("args", {})
         num_strided = cfg.get("num_strided_layers", None) or 3
         bimanual_axis = cfg.get("bimanual_axis", None) or "height"
-        # The train script (Tactile-ReWiND/scripts/train_isaaclab_overfit.py)
-        # stores the channel selection as `shear_channels` — a list of indices
-        # into the saved (T, 40, 25, 3) layout where 0=normal, 1=shear_x,
-        # 2=shear_y. `in_channels` of the model is just len(shear_channels).
-        # Defaults to (1, 2) — shear-only — matching the train script default.
-        shear_channels = tuple(cfg.get("shear_channels", None) or (1, 2))
+        # Channel selection into the (T, 40, 25, 3) layout where
+        # 0=normal, 1=shear_x, 2=shear_y. Two ckpt schemas to support:
+        #   (a) `train_isaaclab_overfit.py` (legacy): stores `shear_channels`,
+        #       a list of indices; `in_channels = len(shear_channels)`. Default
+        #       was (1, 2) — shear-only.
+        #   (b) `finetune_data3.py` / `finetune_multitask.py` (current): stores
+        #       `in_channels` directly (data already arrives as (T, 40, 25, 3),
+        #       no channel selection in training). 3 → (0,1,2), 2 → (1,2).
+        cfg_shear = cfg.get("shear_channels", None)
+        if cfg_shear:
+            shear_channels = tuple(cfg_shear)
+        else:
+            ic = int(cfg.get("in_channels", 2))
+            shear_channels = (0, 1, 2) if ic == 3 else (1, 2)
         in_channels = len(shear_channels)
         self._tactile_model = TactileReWiNDTransformer(
             max_length=cfg.get("max_length", 16),
@@ -178,6 +207,13 @@ class ForgeEnv(FactoryEnv):
         self._tactile_model_max_length = cfg.get("max_length", 16)
         self._tactile_in_channels = in_channels
         self._tactile_shear_channels = shear_channels
+        # Train-time per-slice normalization mode; must be replicated at inference
+        # or the model sees out-of-distribution magnitudes. "off" / "global" /
+        # "per_channel" matches finetune_data3.py / finetune_multitask.py.
+        norm_mode = cfg.get("normalize_mode", None)
+        if norm_mode is None:
+            norm_mode = "per_channel" if cfg.get("normalize_per_channel") else "off"
+        self._tactile_normalize_mode = norm_mode
 
         # Encode instruction once via MiniLM, then drop the encoder.
         instruction = os.getenv(
@@ -199,20 +235,44 @@ class ForgeEnv(FactoryEnv):
         del minilm, tok
         self._tactile_text_emb = text_emb.float()                 # (1, 384)
 
-        # Per-env rolling buffer: (B, T, 40, 25, C) bimanual H-stacked.
+        # Per-env rolling history buffer: (B, H, 40, 25, C) bimanual H-stacked.
+        # H = FORGE_TACTILE_REWARD_HISTORY frames of recent env-steps. At
+        # compute time we linspace-subsample H → max_length frames per env,
+        # mimicking training's `_sample_forward + _resize` so the model sees the
+        # same effective stride at inference as during training.
         # C=2 → shear-only (Fx, Fy); C=3 → normal + shear (Fz, Fx, Fy).
+        # Default = full episode length (15 Hz × episode_length_s for forge tasks),
+        # so an end-of-episode slice approximates training's "start=0, end=N" case
+        # where the progress label saturates near 1.
+        default_history = int(getattr(self, "max_episode_length", 128))
+        env_history = os.getenv("FORGE_TACTILE_REWARD_HISTORY", "").strip()
+        self._tactile_history_length = int(env_history) if env_history else default_history
+        if self._tactile_history_length < self._tactile_model_max_length:
+            self._tactile_history_length = self._tactile_model_max_length
         self._tactile_buffer = torch.zeros(
-            self.num_envs, self._tactile_model_max_length, 40, 25, in_channels,
+            self.num_envs, self._tactile_history_length, 40, 25, in_channels,
             device=self.device, dtype=torch.float32,
+        )
+        # Per-env count of valid frames since last reset (clamped to H).
+        self._tactile_step_count = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.long,
         )
         self._tactile_reward_scale = float(
             os.getenv("FORGE_TACTILE_REWARD_SCALE", "1.0"))
         self._tactile_reward_enabled = True
         print(f"[TactileReward] enabled  ckpt={ckpt}  scale={self._tactile_reward_scale}  "
-              f"instruction={instruction!r}")
+              f"instruction={instruction!r}  history={self._tactile_history_length}  "
+              f"normalize={self._tactile_normalize_mode}")
 
     def _compute_tactile_reward(self) -> torch.Tensor:
-        """(num_envs,) predicted progress as a dense reward bonus."""
+        """(num_envs,) predicted progress as a dense reward bonus.
+
+        Maintains an H-frame rolling history per env (`_tactile_buffer`), then
+        linspace-subsamples H → max_length frames per env to match the stride
+        the reward model saw during training. Envs early in an episode (valid <
+        max_length) get the available frames followed by repeated-last padding —
+        exactly the `_resize` rule used by finetune_data3.py / finetune_multitask.py.
+        """
         if not getattr(self, "_tactile_reward_enabled", False):
             return torch.zeros(self.num_envs, device=self.device)
 
@@ -232,15 +292,58 @@ class ForgeEnv(FactoryEnv):
         full = torch.cat([l_full, r_full], dim=1).float()        # (B, 40, 25, 3)
         current = full[..., list(self._tactile_shear_channels)]  # (B, 40, 25, C)
 
-        # Roll window left, append current frame.
+        # Roll the H-frame history left, append current at the newest slot.
+        H = self._tactile_history_length
+        T = self._tactile_model_max_length
         self._tactile_buffer = torch.roll(self._tactile_buffer, shifts=-1, dims=1)
         self._tactile_buffer[:, -1] = current
+        # Bump per-env step counter, clamped to H (older frames overwritten).
+        self._tactile_step_count = torch.clamp(self._tactile_step_count + 1, max=H)
+        valid = self._tactile_step_count.clamp(min=1)            # (B,) ≥ 1
+        start = (H - valid).long()                               # oldest valid frame index
+
+        # Build per-env gather indices of shape (B, T) matching training _resize:
+        #   if valid >= T:  linspace(start, H-1, T) rounded to int
+        #   if valid <  T:  arange(start, H), then pad tail with H-1 (= idx[-1])
+        device = self._tactile_buffer.device
+        t_grid = torch.arange(T, device=device)                  # (T,)
+        # Long form: per-env linspace in [start, H-1].
+        # frac = t / (T-1) in [0, 1]; idx_f = start + (H-1 - start) * frac.
+        if T > 1:
+            frac = t_grid.float() / float(T - 1)                 # (T,)
+        else:
+            frac = torch.zeros(T, device=device)
+        span = (H - 1 - start).float().unsqueeze(1)              # (B, 1)
+        long_idx = (start.float().unsqueeze(1)
+                    + span * frac.unsqueeze(0)).round().long()   # (B, T)
+        long_idx.clamp_(0, H - 1)
+        # Short form: start + min(t, valid-1).
+        short_idx = (start.unsqueeze(1)
+                     + torch.minimum(t_grid.unsqueeze(0),
+                                     (valid - 1).unsqueeze(1)))  # (B, T)
+        short_idx.clamp_(0, H - 1)
+        is_long = (valid >= T).unsqueeze(1)                      # (B, 1)
+        sel = torch.where(is_long, long_idx, short_idx)          # (B, T)
+
+        # Gather selected frames per env. Buffer is (B, H, 40, 25, C);
+        # expand sel to (B, T, 40, 25, C) for torch.gather along dim=1.
+        _, _, Hh, Ww, Cc = self._tactile_buffer.shape
+        gather_idx = sel[:, :, None, None, None].expand(-1, -1, Hh, Ww, Cc)
+        slc = torch.gather(self._tactile_buffer, 1, gather_idx)  # (B, T, 40, 25, C)
+
+        # Per-slice normalization (must match training).
+        if self._tactile_normalize_mode == "global":
+            denom = slc.abs().amax(dim=(1, 2, 3, 4), keepdim=True).clamp_min(1e-6)
+            slc = slc / denom
+        elif self._tactile_normalize_mode == "per_channel":
+            denom = slc.abs().amax(dim=(1, 2, 3), keepdim=True).clamp_min(1e-6)
+            slc = slc / denom
 
         # (B, T, H, W, C) -> (B, T, C, H, W) for the encoder.
-        x = self._tactile_buffer.permute(0, 1, 4, 2, 3).contiguous()
+        x = slc.permute(0, 1, 4, 2, 3).contiguous()
         text = self._tactile_text_emb.expand(self.num_envs, -1)
         with torch.no_grad():
-            progress = self._tactile_model(x, text).squeeze(-1)   # (B, T)
+            progress = self._tactile_model(x, text).squeeze(-1)  # (B, T)
         return progress[:, -1] * self._tactile_reward_scale
 
     # ----------------------------------------------------------------------
@@ -373,32 +476,52 @@ class ForgeEnv(FactoryEnv):
         shear_force = sensor.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
         return torch.cat((normal_force, shear_force), dim=-1)
 
-    def _flush_tactile_episode(self, success: int = 0):
-        """Write the buffered target-env tactile tensors for the current episode.
+    def _flush_tactile_episode(self, success: int = 0, env_id: int | None = None):
+        """Write the buffered tactile tensors for one completed episode.
 
         Saved file is a dict (np.save with allow_pickle=True):
             {"Task":     <fixed task description>,
              "Tactile":  np.ndarray (T, H, W, C) float16,
              "Success":  int 0 / 1}
         Load with `np.load(path, allow_pickle=True).item()`.
+
+        env_id=None  → legacy single-target-env mode; `_tactile_episode_frames`
+                       is a flat list.
+        env_id=int   → multi-env mode; flush `_tactile_episode_frames[env_id]`.
         """
-        if not self._save_tactile_force_field or not self._tactile_episode_frames:
+        if not self._save_tactile_force_field:
+            return
+        frames = (
+            self._tactile_episode_frames if env_id is None
+            else self._tactile_episode_frames[env_id]
+        )
+        if not frames:
             return
 
-        episode_path = os.path.join(self._tactile_save_dir, f"ep{self._tactile_saved_episode_count}.npy")
-        episode_tensor = np.stack(self._tactile_episode_frames, axis=0).astype(np.float16, copy=False)
+        # Legacy single-env path keeps the plain `ep{N}.npy` name; multi-env
+        # path appends the source env id so downstream tooling can group / dedupe.
+        if env_id is None:
+            fname = f"ep{self._tactile_saved_episode_count}.npy"
+        else:
+            fname = f"ep{self._tactile_saved_episode_count}_env{env_id:03d}.npy"
+        episode_path = os.path.join(self._tactile_save_dir, fname)
+        episode_tensor = np.stack(frames, axis=0).astype(np.float16, copy=False)
         payload = {
             "Task": "grasp peg and insert to another hole",
             "Tactile": episode_tensor,
             "Success": int(success),
         }
         np.save(episode_path, payload, allow_pickle=True)
-        self._tactile_episode_frames.clear()
+        frames.clear()
         self._tactile_saved_episode_count += 1
 
     def _save_env0_tactile_force_field(self):
         """Buffer target-env tactile tensors and flush one .npy file per episode."""
         if not self._save_tactile_force_field:
+            return
+
+        if self._save_tactile_all_envs:
+            self._save_all_envs_tactile_force_field()
             return
 
         target_env_id = min(71, self.num_envs - 1)
@@ -439,6 +562,65 @@ class ForgeEnv(FactoryEnv):
         tactile_frame = np.concatenate((left_force_field, right_force_field), axis=0)
         self._tactile_episode_frames.append(tactile_frame.astype(np.float16, copy=False))
         self._tactile_step_in_episode += 1
+
+    def _save_all_envs_tactile_force_field(self):
+        """Multi-env variant: every env keeps its own per-episode buffer.
+
+        On each call:
+          1. Flush the buffer of any env that just hit reset (one .npy per ep).
+          2. Honour `FORGE_TACTILE_MAX_BUFFER_FRAMES` as a global safety cap
+             (sum of all per-env buffers) — if exceeded, pause appends until
+             flushes free space.
+          3. Do one GPU→CPU transfer for the whole batch, then per-env append.
+        """
+        # 1) Episode-boundary flushes for any env that reset this step.
+        reset_envs = torch.nonzero(self.reset_buf, as_tuple=False).flatten().tolist()
+        for env_id in reset_envs:
+            success = (
+                int(self.ep_succeeded[env_id].item())
+                if hasattr(self, "ep_succeeded") else 0
+            )
+            self._flush_tactile_episode(success=success, env_id=env_id)
+            self._tactile_step_in_episode_per_env[env_id] = 0
+
+        # 2) Memory safety: total frames across all per-env buffers.
+        total_frames = sum(len(buf) for buf in self._tactile_episode_frames)
+        if total_frames >= self._tactile_max_buffer_frames:
+            if not getattr(self, "_tactile_overflow_warned", False):
+                print(
+                    f"[TactileSave] WARNING: per-env buffers hold {total_frames} "
+                    f"frames (cap {self._tactile_max_buffer_frames}); pausing "
+                    f"appends until next flush. Raise FORGE_TACTILE_MAX_BUFFER_FRAMES "
+                    f"or increase save_interval if this is hot."
+                )
+                self._tactile_overflow_warned = True
+            for env_id in range(self.num_envs):
+                self._tactile_step_in_episode_per_env[env_id] += 1
+            return
+        self._tactile_overflow_warned = False
+
+        # 3) Single GPU→CPU transfer for the whole batch.
+        left_sensor = self.scene.sensors["left_tactile_sensor"]
+        right_sensor = self.scene.sensors["right_tactile_sensor"]
+        nrows, ncols = left_sensor.cfg.tactile_array_size
+        left_normal = left_sensor.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+        left_shear = left_sensor.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
+        right_normal = right_sensor.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+        right_shear = right_sensor.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
+        left_full = torch.cat([left_normal, left_shear], dim=-1)
+        right_full = torch.cat([right_normal, right_shear], dim=-1)
+        all_frames = (
+            torch.cat([left_full, right_full], dim=1)
+            .detach().cpu().numpy().astype(np.float16, copy=False)
+        )
+
+        # 4) Per-env append, respecting save_interval against this env's
+        #    step-in-episode counter.
+        for env_id in range(self.num_envs):
+            step = self._tactile_step_in_episode_per_env[env_id]
+            if step % self._tactile_save_interval == 0:
+                self._tactile_episode_frames[env_id].append(all_frames[env_id])
+            self._tactile_step_in_episode_per_env[env_id] = step + 1
 
     def _compute_intermediate_values(self, dt):
         """Add noise to observations for force sensing."""
@@ -753,9 +935,10 @@ class ForgeEnv(FactoryEnv):
         # Reset success pred metrics.
         for thresh in [0.5, 0.6, 0.7, 0.8, 0.9]:
             self.first_pred_success_tx[thresh][env_ids] = 0
-        # Clear tactile reward buffer for envs that just reset.
+        # Clear tactile reward history + step counter for envs that just reset.
         if getattr(self, "_tactile_reward_enabled", False):
             self._tactile_buffer[env_ids] = 0
+            self._tactile_step_count[env_ids] = 0
 
     def _log_forge_metrics(self, rew_dict, policy_success_pred):
         """Log metrics to evaluate success prediction performance."""

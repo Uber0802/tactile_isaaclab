@@ -13,16 +13,18 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
-FORGE_TACTILE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/pegpickplace_baselineA \
+FORGE_TACTILE_REWARD_CKPT=/mnt/tank/uber/Tactile-Reward/exp_taskcompare/nut_scratch/nut_scratch_epoch21.pth \
+FORGE_TACTILE_REWARD_SCALE=0.3 \
+FORGE_TACTILE_REWARD_INSTRUCTION="pick up the nut and thread it onto the bolt" \
+FORGE_TACTILE_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-party/Tactile-ReWiND \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
-    --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
+    --task Isaac-Forge-NutThread-PickPlace-Direct-v0 \
     --baseline A \
-    --num_envs 256 \
+    --num_envs 128 \
     --max_iterations 10000 \
     --enable_cameras \
-    --track \
     --headless \
+    --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name PegInsert_PickPlace_baselineA_new
+    --wandb-name NutThread_PickPlace_baselineTacReward
