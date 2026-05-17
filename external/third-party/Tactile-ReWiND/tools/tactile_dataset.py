@@ -24,7 +24,11 @@ class TactileReWiNDDataset(Dataset):
     """ReWiND-style sampler over AnyTouch2 tactile trajectories.
 
     Output schema per item:
-      video_array : float32  (max_length, 2, 320, 480)
+      video_array : float32  (max_length, C, 320, 480)
+                    C = 2 for shear-only (Fx, Fy) AnyTouch2 npy,
+                    C = 3 for (Fz, Fx, Fy) -- 3-channel npy stored as
+                    (Fx, Fy, Fz) on disk are reordered at load time to
+                    match IsaacLab sim convention.
       text_array  : float32  (text_dim,)
       progress    : float32  (max_length,)
       class_label : float32  (max_length,)   # 1 = positive sample, 0 = negative
@@ -55,7 +59,11 @@ class TactileReWiNDDataset(Dataset):
         align_to_isaaclab: bool = False,
         multiscale_align: bool = False,
         multiscale_resolutions=None,
+        normalize_mode: str = "off",
     ):
+        if normalize_mode not in ("off", "global", "per_channel"):
+            raise ValueError(f"normalize_mode must be 'off' | 'global' | 'per_channel', "
+                             f"got {normalize_mode!r}")
         self.metadata_path = metadata_h5_path
         self.max_length = max_length
         self.rewind = rewind
@@ -69,6 +77,7 @@ class TactileReWiNDDataset(Dataset):
         self.multiscale_resolutions = list(
             multiscale_resolutions or self.DEFAULT_MULTISCALE_RESOLUTIONS
         )
+        self.normalize_mode = normalize_mode
         # Set per-call by __getitem__ so workers don't need shared state.
         self._current_target = (20, 25)
 
@@ -137,13 +146,77 @@ class TactileReWiNDDataset(Dataset):
             progress = progress[local]
         return traj_idx, progress
 
+    @staticmethod
+    def _normalize_frames(frames_thwc: np.ndarray, mode: str) -> np.ndarray:
+        """In-place max-abs normalization on a (T, H, W, C) float32 buffer.
+
+        Modes:
+          * 'off'         : no-op.
+          * 'global'      : divide everything by max|value| across the whole
+                            sample → single scalar denom. Preserves Fz/Fx/Fy
+                            relative magnitudes; dominant channel hits ±1,
+                            others stay smaller.
+          * 'per_channel' : divide each channel by its own per-sample max → each
+                            of Fz, Fx, Fy independently reaches [-1, 1]. Robust
+                            to which channel dominates (helps real↔sim transfer)
+                            but loses inter-channel ratio.
+
+        eps clamp prevents divide-by-zero for all-flat inputs.
+        """
+        if mode == "off":
+            return frames_thwc
+        if mode == "global":
+            denom = np.abs(frames_thwc).max(axis=None, keepdims=True)   # (1,1,1,1)
+        elif mode == "per_channel":
+            denom = np.abs(frames_thwc).max(axis=(0, 1, 2), keepdims=True)  # (1,1,1,C)
+        else:
+            raise ValueError(f"unknown normalize mode {mode!r}")
+        np.maximum(denom, 1e-6, out=denom)
+        frames_thwc /= denom
+        return frames_thwc
+
     def _to_torch_frames(self, traj: np.ndarray, traj_idx: np.ndarray) -> th.Tensor:
-        frames_thwc = traj[traj_idx].astype(np.float32, copy=True)
-        x = th.from_numpy(frames_thwc).permute(0, 3, 1, 2).contiguous()  # (T, C, H, W)
         if self.align_to_isaaclab:
-            target_h, target_w = self._current_target
-            x = self._align_to_isaaclab(x, target_h=target_h, target_w=target_w)
-        return x
+            return self._to_aligned_frames(traj, traj_idx)
+        frames_thwc = traj[traj_idx].astype(np.float32, copy=True)
+        # 3-channel AnyTouch2 dataset stores (Fx, Fy, Fz); IsaacLab sim convention
+        # is (Fz, Fx, Fy). Swap so the model trains on the same channel order it
+        # will see in sim (matches `shear_channels=(0,1,2)` indexing).
+        if frames_thwc.shape[-1] == 3:
+            frames_thwc = frames_thwc[..., [2, 0, 1]]
+        frames_thwc = self._normalize_frames(frames_thwc, self.normalize_mode)
+        return th.from_numpy(frames_thwc).permute(0, 3, 1, 2).contiguous()  # (T, C, H, W)
+
+    def _to_aligned_frames(self, traj: np.ndarray, traj_idx: np.ndarray) -> th.Tensor:
+        """Aligned path: sub-sample on the fp16 mmap view *before* the fp32 cast.
+
+        Equivalent to `_to_torch_frames` followed by `_align_to_isaaclab`, but
+        avoids materializing the full (T, 320, 480, C) fp32 buffer when only
+        (T, 2*target_h, target_w, C) ≈ (T, 40, 25, C) survives.
+        """
+        target_h, target_w = self._current_target
+        H_in, W_in, C = 320, 480, traj.shape[-1]
+        if traj.shape[1] != H_in or traj.shape[2] != W_in:
+            raise ValueError(f"expected (·,{H_in},{W_in},C) frames, got {traj.shape[1:]}")
+        half_w = W_in // 2  # 240; per-hand split along W
+
+        # Match _align_to_isaaclab's per-hand linspace, computed in THWC index space:
+        #   per-hand "h_idx" (target_h)  → indices into original W within [0, 240)
+        #   per-hand "w_idx" (target_w)  → indices into original H axis (320)
+        h_idx_local = np.linspace(0, half_w - 1, target_h).round().astype(np.int64)
+        w_idx_local = np.linspace(0, H_in - 1, target_w).round().astype(np.int64)
+        # left ++ right concatenated on output H: original-W indices.
+        h_idx_full = np.concatenate([h_idx_local, h_idx_local + half_w])  # (2*target_h,)
+
+        # Orthogonal fancy index pulls just the pixels we need from the mmap.
+        # Result shape: (T, target_w, 2*target_h, C).
+        sub = traj[np.ix_(traj_idx, w_idx_local, h_idx_full, np.arange(C))]
+        # → (T, 2*target_h, target_w, C), then fp32 + channel-swap + CHW.
+        sub = np.ascontiguousarray(sub.transpose(0, 2, 1, 3)).astype(np.float32, copy=False)
+        if C == 3:
+            sub = sub[..., [2, 0, 1]]
+        sub = self._normalize_frames(sub, self.normalize_mode)
+        return th.from_numpy(sub).permute(0, 3, 1, 2).contiguous()
 
     @staticmethod
     def _align_to_isaaclab(x: th.Tensor,
