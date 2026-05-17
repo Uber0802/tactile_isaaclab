@@ -45,7 +45,8 @@ class CosineWithMinLR(torch.optim.lr_scheduler._LRScheduler):
         return [self.min_lr for _ in self.base_lrs]
 
 
-def train_step(model, batch, optimizer, scheduler, device, clip_grad: bool, log_to_wandb: bool):
+def train_step(model, batch, optimizer, scheduler, device, clip_grad: bool, log_to_wandb: bool,
+               amp_dtype=None):
     model.train()
     optimizer.zero_grad()
 
@@ -64,22 +65,25 @@ def train_step(model, batch, optimizer, scheduler, device, clip_grad: bool, log_
     all_progress = torch.cat([progress, neg_progress], dim=0)
     all_label = torch.cat([label, neg_label], dim=0)
 
-    pred = model(all_video, all_text).squeeze(-1)        # (2B, T)
+    use_amp = amp_dtype is not None and device.type == "cuda"
+    with torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+        pred = model(all_video, all_text).squeeze(-1)        # (2B, T)
 
-    # Skip the first frame's prediction (no useful causal history).
-    pred_t = pred[:, 1:]
-    target_t = all_progress[:, 1:]
+        # Skip the first frame's prediction (no useful causal history).
+        pred_t = pred[:, 1:]
+        target_t = all_progress[:, 1:]
 
-    # Per-sample mask: positive sample if any frame's class_label is 1.
-    is_pos = all_label[:, 0].bool()                      # (2B,)
-    pos_loss = mse_loss(pred_t[is_pos], target_t[is_pos]) if is_pos.any() else pred.sum() * 0
-    neg_loss = mse_loss(pred_t[~is_pos], target_t[~is_pos]) if (~is_pos).any() else pred.sum() * 0
+        # Per-sample mask: positive sample if any frame's class_label is 1.
+        is_pos = all_label[:, 0].bool()                      # (2B,)
+        pos_loss = mse_loss(pred_t[is_pos], target_t[is_pos]) if is_pos.any() else pred.sum() * 0
+        neg_loss = mse_loss(pred_t[~is_pos], target_t[~is_pos]) if (~is_pos).any() else pred.sum() * 0
 
-    n_pos = int(is_pos.sum().item())
-    n_neg = int((~is_pos).sum().item())
-    total = max(n_pos + n_neg, 1)
-    loss = pos_loss * n_pos / total + neg_loss * n_neg / total
+        n_pos = int(is_pos.sum().item())
+        n_neg = int((~is_pos).sum().item())
+        total = max(n_pos + n_neg, 1)
+        loss = pos_loss * n_pos / total + neg_loss * n_neg / total
 
+    # bf16 autocast doesn't need GradScaler; backward in autograd's native dtype.
     loss.backward()
     if clip_grad:
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -117,6 +121,14 @@ def main(args):
             config=vars(args),
         )
 
+    # Resolve normalize mode: explicit --normalize wins; legacy --normalize_per_channel
+    # promotes 'off' → 'per_channel' for back-compat. Stored in saved args dict so eval
+    # scripts can read it back.
+    normalize_mode = args.normalize
+    if args.normalize_per_channel and normalize_mode == "off":
+        normalize_mode = "per_channel"
+    args.normalize_mode = normalize_mode
+
     train_ds = TactileReWiNDDataset(
         metadata_h5_path=args.train_metadata,
         max_length=args.max_length,
@@ -129,7 +141,10 @@ def main(args):
         data_dir_override=args.data_dir_override,
         align_to_isaaclab=args.isaaclab_aligned,
         multiscale_align=args.multiscale_align,
+        normalize_mode=normalize_mode,
     )
+    if normalize_mode != "off":
+        print(f"normalize: mode={normalize_mode}")
     print(f"train: {len(train_ds.tasks)} tasks, {len(train_ds)} samples per epoch")
     if args.isaaclab_aligned:
         print("alignment: AnyTouch2 (320, 480, 2) → IsaacLab (40, 25, 2) "
@@ -143,6 +158,7 @@ def main(args):
         pin_memory=True,
         drop_last=True,
         persistent_workers=args.num_workers > 0,
+        prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None,
     )
 
     if args.isaaclab_aligned:
@@ -161,10 +177,26 @@ def main(args):
         per_hand_dim=args.per_hand_dim,
         num_strided_layers=num_strided_layers,
         bimanual_axis=bimanual_axis,
+        in_channels=args.in_channels,
     ).to(device)
     print(model)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"total parameters: {n_params / 1e6:.2f} M")
+
+    # AMP: bf16 on cuda (Ada GPUs prefer bf16; no GradScaler needed).
+    amp_dtype = None
+    if args.amp != "off" and device.type == "cuda":
+        amp_dtype = torch.bfloat16 if args.amp == "bf16" else torch.float16
+        print(f"amp: autocast dtype={amp_dtype}")
+
+    # torch.compile: safe when shapes are static. Multiscale alignment rotates
+    # through 17 resolutions which forces recompilation, so skip it then.
+    if args.compile_model:
+        if args.multiscale_align:
+            print("compile: skipped (--multiscale_align changes batch shapes).")
+        else:
+            print(f"compile: torch.compile(mode={args.compile_mode!r})")
+            model = torch.compile(model, mode=args.compile_mode)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
     total_steps = args.epochs * args.steps_per_epoch
@@ -177,16 +209,18 @@ def main(args):
         pbar = tqdm(train_loader, desc=f"epoch {epoch + 1}/{args.epochs}")
         for batch in pbar:
             metrics = train_step(model, batch, optimizer, scheduler, device,
-                                 args.clip_grad, log_to_wandb)
+                                 args.clip_grad, log_to_wandb, amp_dtype=amp_dtype)
             global_step += 1
             pbar.set_postfix(loss=f"{metrics['loss']:.4f}",
                              pos=f"{metrics['pos_loss']:.4f}",
                              neg=f"{metrics['neg_loss']:.4f}")
 
         ckpt_path = os.path.join(args.ckpt_dir, f"tactile_rewind_epoch{epoch}.pth")
+        # Unwrap torch.compile so state_dict keys match the un-compiled model.
+        save_model = getattr(model, "_orig_mod", model)
         torch.save({
             "args": vars(args),
-            "model_state_dict": model.state_dict(),
+            "model_state_dict": save_model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "epoch": epoch,
@@ -215,14 +249,32 @@ if __name__ == "__main__":
     ap.add_argument("--batch_size", type=int, default=16)
     ap.add_argument("--steps_per_epoch", type=int, default=200)
     ap.add_argument("--num_workers", type=int, default=4)
+    ap.add_argument("--prefetch_factor", type=int, default=4,
+                    help="DataLoader prefetch_factor (ignored when num_workers=0).")
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--min_lr", type=float, default=1e-5)
     ap.add_argument("--clip_grad", action="store_true")
+    ap.add_argument("--amp", choices=["off", "bf16", "fp16"], default="bf16",
+                    help="Autocast dtype. bf16 (default) skips GradScaler; fp16 currently "
+                         "also skips GradScaler — switch to off if you see NaNs.")
+    ap.add_argument("--compile", dest="compile_model",
+                    action=argparse.BooleanOptionalAction, default=False,
+                    help="torch.compile the model. Recommended for static-shape runs.")
+    ap.add_argument("--compile_mode", default="reduce-overhead",
+                    choices=["default", "reduce-overhead", "max-autotune"])
 
-    # Augmentation
+    # Augmentation / preprocessing
     ap.add_argument("--rewind", action="store_true")
     ap.add_argument("--rewind_ratio", type=float, default=0.8)
     ap.add_argument("--neg_ratio", type=float, default=0.2)
+    ap.add_argument("--normalize", choices=["off", "global", "per_channel"], default="off",
+                    help="Per-sample max-abs normalize. 'global' uses one scalar "
+                         "denominator (preserves Fz/Fx/Fy ratio); 'per_channel' "
+                         "uses one denominator per channel (loses inter-channel "
+                         "ratio, robust to which channel dominates).")
+    # Back-compat alias for runs scripted before the 3-mode flag landed.
+    ap.add_argument("--normalize_per_channel", action="store_true",
+                    help="DEPRECATED: equivalent to `--normalize per_channel`.")
 
     # Model
     ap.add_argument("--max_length", type=int, default=16)
@@ -232,6 +284,10 @@ if __name__ == "__main__":
     ap.add_argument("--per_hand_dim", type=int, default=384)
     ap.add_argument("--num_strided_layers", type=int, default=0,
                     help="0 = auto (5 if !isaaclab_aligned else 3).")
+    ap.add_argument("--in_channels", type=int, default=2,
+                    help="Encoder input channels. 2 = shear-only (Fx,Fy); "
+                         "3 = normal+shear (Fz,Fx,Fy) -- requires the npy files "
+                         "in --data_dir to have channel dim 3.")
 
     # Cross-dataset alignment
     ap.add_argument("--isaaclab_aligned", action="store_true",
