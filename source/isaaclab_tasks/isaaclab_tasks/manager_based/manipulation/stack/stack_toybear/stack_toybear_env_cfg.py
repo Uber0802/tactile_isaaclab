@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 import isaaclab.sim as sim_utils
 
-
 from isaaclab.assets import DeformableObjectCfg
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -18,7 +17,7 @@ from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab_tasks.direct.factory.factory_env_cfg import ASSET_DIR
 from isaaclab.utils import configclass
 
-from isaaclab.utils.assets import ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab_tasks.direct.factory.factory_tasks_cfg import Peg8mm
 
 from isaaclab_assets.sensors import GELSIGHT_R15_CFG
@@ -39,6 +38,9 @@ LOCAL_PEG_INSERT_ROBOT_USD_PATH = "./franka_gelsight.usd"
 LOCAL_BLUE_BLOCK_USD  = "./assets/Props/blue_block_sdf.usd"
 LOCAL_RED_BLOCK_USD   = "./assets/Props/red_block_sdf.usd"
 LOCAL_GREEN_BLOCK_USD = "./assets/Props/green_block_sdf.usd"
+# LOCAL_TOY_BEAR_USD = "./assets/Props/toy_bear_rigid_sdf.usd"
+LOCAL_TOY_BEAR_USD = "./assets/Props/lighter.usd"
+
 
 @configclass
 class GelsightObservationsCfg(ObservationsCfg):
@@ -65,6 +67,75 @@ class GelsightRewardsCfg(RewardsCfg):
     """Reward specifications for the Gelsight environment."""
 
     rewind_tactile_reward = RewTerm(func=mdp.rewind_tactile_reward, weight=0.2)
+    '''
+    ee_to_stack_object = RewTerm(
+        func=mdp.ee_to_stack_object_distance_reward,
+        params={
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
+            "max_distance": 0.25,
+            "max_reward": 1.0,
+        },
+        weight=0.5,
+    )
+
+    stack_object_z_reward_exp = RewTerm(
+        func=mdp.stack_object_z_reward_exp,
+        params={
+            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
+            "max_z_distance": 0.0203 * 2 + 0.025,
+        },
+        weight=1.0,
+    )
+
+    stack_object_xy_precision = RewTerm(
+        func=mdp.stack_object_precision_xy_reward,
+        params={
+            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
+            "target_cube_cfg": SceneEntityCfg("target_cube"), 
+            "stack_height_offset": 0.0406,
+            "height_tolerance": 0.005,
+            "max_xy_distance": 0.16,
+            "max_reward": 0.1,
+        },
+        weight=1.0,
+    )
+
+    stack_object_xy_precision_exp = RewTerm(
+        func=mdp.stack_object_precision_xy_reward_exp,
+        params={
+            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
+            "target_cube_cfg": SceneEntityCfg("target_cube"),
+            "stack_height_offset": 0.0406,
+            "height_tolerance": 0.005,
+            "distance_offset": 0.1,
+            "decay_rate": 30.0,
+        },
+        weight=1.0,
+    )
+
+    target_cube_home_penalty = RewTerm(
+        func=mdp.target_cube_original_xy_penalty,
+        params={
+            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
+            "target_cube_cfg": SceneEntityCfg("target_cube"),
+            "stack_height_offset": 0.0406,
+            "height_tolerance": 0.005,
+            "penalty_scale": 5.0,
+        },
+        weight=-1.0,
+    )
+    stack_success = RewTerm(
+        func=mdp.stack_success,
+        params={
+            "robot_cfg": SceneEntityCfg("robot"),
+            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
+            "target_cube_cfg": SceneEntityCfg("target_cube"),
+        },
+        weight=10.0,
+    )
+    '''
+    
 
 @configclass
 class EventCfg:
@@ -92,9 +163,9 @@ class EventCfg:
         func=franka_stack_events.randomize_object_pose,
         mode="reset",
         params={
-            "pose_range": {"x": (0.4, 0.6), "y": (-0.10, 0.10), "z": (0.0203, 0.0203), "yaw": (-1.0, 1, 0)},
+            "pose_range": {"x": (0.4, 0.6), "y": (-0.10, 0.10), "yaw": (-1.0, 1, 0)},
             "min_separation": 0.1,
-            "asset_cfgs": [SceneEntityCfg("cube_1"), SceneEntityCfg("cube_2"), SceneEntityCfg("cube_3")],
+            "asset_cfgs": [SceneEntityCfg("stack_object"), SceneEntityCfg("target_cube")],
         },
     )
 
@@ -115,13 +186,13 @@ class FrankaStackToybearEnvCfg(StackEnvCfg):
         enable_force_field=True,
         tactile_array_size=(20, 25),
         tactile_margin=0.003,
-        contact_object_prim_path_expr="{ENV_REGEX_NS}/Cube_.*",
+        contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
         normal_contact_stiffness=1.0,
         friction_coefficient=2.0,
         tangential_stiffness=0.1,
         camera_cfg=TiledCameraCfg(
             prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_tip_link/cam",
-            update_period=1 / 15, # TODO: Double check
+            update_period=1 / 15,
             height=GELSIGHT_R15_CFG.image_height,
             width=GELSIGHT_R15_CFG.image_width,
             data_types=["distance_to_image_plane"],
@@ -136,7 +207,7 @@ class FrankaStackToybearEnvCfg(StackEnvCfg):
         enable_force_field=True,
         tactile_array_size=(20, 25),
         tactile_margin=0.003,
-        contact_object_prim_path_expr="{ENV_REGEX_NS}/Cube_.*",
+        contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
         normal_contact_stiffness=1.0,
         friction_coefficient=2.0,
         tangential_stiffness=0.1,
@@ -215,32 +286,24 @@ class FrankaStackToybearEnvCfg(StackEnvCfg):
         )
 
         # Set each stacking cube deterministically
-        self.scene.cube_1 = DeformableObjectCfg(
-            prim_path="{ENV_REGEX_NS}/Cube_1",
-            init_state=DeformableObjectCfg.InitialStateCfg(pos=(0.5, 0, 0.05), rot=(0.707, 0, 0, 0.707)),
-            spawn=UsdFileCfg(
-                usd_path=f"{ISAACLAB_NUCLEUS_DIR}/Objects/Teddy_Bear/teddy_bear.usd",
-                scale=(0.01, 0.01, 0.01),
+        self.scene.stack_object = RigidObjectCfg(
+            prim_path="{ENV_REGEX_NS}/stack_object",
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0, 0.1), rot=(0.707, 0, 0, 0.707)),
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=LOCAL_TOY_BEAR_USD,
+                scale=(0.002, 0.002, 0.002),
+                rigid_props=cube_properties,
             ),
         )
-        self.scene.cube_2 = RigidObjectCfg(
-            prim_path="{ENV_REGEX_NS}/Cube_2",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.55, 0.05, 0.0203], rot=[1, 0, 0, 0]),
+
+        self.scene.target_cube = RigidObjectCfg(
+            prim_path="{ENV_REGEX_NS}/target_cube",
+            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.0, 0.00, 0.0203], rot=[1, 0, 0, 0]),
             spawn=UsdFileCfg(
                 usd_path=LOCAL_RED_BLOCK_USD,
                 scale=(1.0, 1.0, 1.0),
                 rigid_props=cube_properties,
-                semantic_tags=[("class", "cube_2")],
-            ),
-        )
-        self.scene.cube_3 = RigidObjectCfg(
-            prim_path="{ENV_REGEX_NS}/Cube_3",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.60, -0.1, 0.0203], rot=[1, 0, 0, 0]),
-            spawn=UsdFileCfg(
-                usd_path=LOCAL_GREEN_BLOCK_USD,
-                scale=(1.0, 1.0, 1.0),
-                rigid_props=cube_properties,
-                semantic_tags=[("class", "cube_3")],
+                semantic_tags=[("class", "target_cube")],
             ),
         )
 
@@ -276,3 +339,19 @@ class FrankaStackToybearEnvCfg(StackEnvCfg):
                 ),
             ],
         )
+        
+        '''
+        # Frame transformer to continuously track the peg's volumetric center
+        self.scene.peg_center_frame = FrameTransformerCfg(
+            prim_path="{ENV_REGEX_NS}/stack_object/forge_round_peg_8mm",
+            debug_vis=False,  # Set to True to see an axis marker exactly at the peg's center!
+            visualizer_cfg=marker_cfg,
+            target_frames=[
+                FrameTransformerCfg.FrameCfg(
+                    prim_path="{ENV_REGEX_NS}/stack_object/forge_round_peg_8mm",
+                    name="peg_center",
+                    offset=OffsetCfg(pos=(0.0, 0.0, 0.025)),
+                ),
+            ],
+        )
+        '''

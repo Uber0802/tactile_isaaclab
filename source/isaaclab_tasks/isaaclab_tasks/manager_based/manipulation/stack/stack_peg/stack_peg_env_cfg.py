@@ -72,14 +72,14 @@ class GelsightRewardsCfg(RewardsCfg):
             "max_distance": 0.25,
             "max_reward": 1.0,
         },
-        weight=0.5,
+        weight=1,
     )
 
     stack_object_z_reward_exp = RewTerm(
         func=mdp.stack_object_z_reward_exp,
         params={
-            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
-            "max_z_distance": 0.0203 * 2 + 0.025,
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
+            "max_z_distance": 0.0234 * 2 + 0.025,
         },
         weight=1.0,
     )
@@ -89,7 +89,7 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
             "target_cube_cfg": SceneEntityCfg("target_cube"), 
-            "stack_height_offset": 0.0406,
+            "stack_height_offset": 0.0468,
             "height_tolerance": 0.005,
             "max_xy_distance": 0.16,
             "max_reward": 0.1,
@@ -102,8 +102,8 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0406,
-            "height_tolerance": 0.005,
+            "stack_height_offset": 0.0468,
+            "height_tolerance": 0.03,
             "distance_offset": 0.1,
             "decay_rate": 30.0,
         },
@@ -115,11 +115,11 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0406,
-            "height_tolerance": 0.005,
+            "stack_height_offset": 0.0468,
+            "height_tolerance": 0.03,
             "penalty_scale": 5.0,
         },
-        weight=-1.0,
+        weight=0,
     )
     stack_success = RewTerm(
         func=mdp.stack_success,
@@ -289,7 +289,7 @@ class FrankaStackPegEnvCfg(StackEnvCfg):
                 usd_path=held_asset_cfg.usd_path,
                 activate_contact_sensors=True,
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    disable_gravity=True,
+                    disable_gravity=False,
                     max_depenetration_velocity=5.0,
                     linear_damping=0.0,
                     angular_damping=0.0,

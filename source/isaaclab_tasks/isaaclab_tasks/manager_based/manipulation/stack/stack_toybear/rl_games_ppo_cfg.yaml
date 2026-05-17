@@ -51,7 +51,7 @@ params:
   load_path: '' # path to the checkpoint to load
 
   config:
-    name: franka_stack_peg
+    name: franka_stack_toy_bear
     env_name: rlgpu
     device: 'cuda:0'
     device_name: 'cuda:0'
