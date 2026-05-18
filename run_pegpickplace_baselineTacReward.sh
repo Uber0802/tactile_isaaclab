@@ -13,8 +13,6 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
-FORGE_TACTILE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/pegpickplace_baselineA \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
     --baseline A \

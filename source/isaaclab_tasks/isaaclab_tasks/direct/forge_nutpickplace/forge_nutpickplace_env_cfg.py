@@ -105,6 +105,9 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
     def apply_baseline(self, baseline: str) -> None:
         if baseline == "A":
             return
+        if baseline == "A_hard":
+            self._apply_baseline_A_hard()
+            return
         if baseline == "B":
             self._apply_baseline_B()
             return
@@ -116,7 +119,8 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
             return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskNutThreadPickPlaceCfg. "
-            f"Implemented: A (frozen), B (tactile force fields), "
+            f"Implemented: A (frozen), A_hard (A obs + yaw_reward=0 + wider pose noise), "
+            f"B (tactile force fields), "
             f"B2 (frozen ReWiND CNN -> 768-dim embedding), "
             f"single_pos (A obs + all reset position randomization zeroed)."
         )
@@ -149,6 +153,31 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         # Keep the relative order of A's existing entries; just append tactile.
         self.obs_order = list(self.obs_order) + tactile_keys
         self.state_order = list(self.state_order) + tactile_keys
+
+    def _apply_baseline_A_hard(self) -> None:
+        """A_hard: same obs/state as A, but the dense yaw shaping is cut and the
+        initial pose randomization is widened. Designed as a "shaping-insufficient"
+        regime to test whether tactile reward can provide learning signal that
+        baselineA's dense gradients otherwise supplied.
+
+        Changes vs A:
+          - `yaw_reward_scale = 0.0`: removes `r_yaw = xy_coarse * yaw_progress`
+            (~0.5 reward contribution near bolt). Policy now has to learn the
+            wrist-yaw < 0 success condition from the sparse `curr_success` bonus
+            alone — yaw exploration was the part that baselineA-with-yaw-reward
+            cracked early; this should slow `success` emergence dramatically.
+          - Wider hand init: 2cm→8cm xy, 1cm→3cm z. Policy has to localise the
+            nut from a much larger initial offset distribution.
+          - Wider bolt init: 5cm→10cm xy, +3cm z noise. Bolt position varies
+            more, breaking any hard-coded transport heuristics.
+        """
+        # Reward shaping ablation.
+        self.task.yaw_reward_scale = 0.0
+        # Wider initial randomization.
+        self.task.hand_init_pos_noise = [0.08, 0.08, 0.03]
+        self.task.fixed_asset_init_pos_noise = [0.10, 0.10, 0.03]
+        # (hand_init_orn_noise yaw=1.57 rad and fixed_asset_init_orn_range_deg=360
+        # are already at their wide defaults; no override needed.)
 
     def _apply_baseline_single_pos(self) -> None:
         """Single-position baseline: identical to A in obs/state, but zero out
