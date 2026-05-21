@@ -6,9 +6,33 @@ from typing import Sequence
 
 from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab_tasks.manager_based.manipulation.stack.stack_env_cfg import StackEnvCfg
+from isaaclab.managers import EventTermCfg as EventTerm
+from isaaclab.managers import SceneEntityCfg
+from isaaclab_tasks.manager_based.manipulation.stack.mdp import franka_stack_events
 
 class StackTactileEnv(ManagerBasedRLEnv):
     def __init__(self, cfg: StackEnvCfg, render_mode: str | None = None, **kwargs):
+        if os.environ.get("FORGE_FIXED_OBJECT_POS", "0") == "1":
+            if hasattr(cfg, "events") and hasattr(cfg.events, "randomize_cube_positions"):
+                delattr(cfg.events, "randomize_cube_positions")
+                cfg.events.randomize_cube_positions_1 = EventTerm(
+                    func=franka_stack_events.randomize_object_pose,
+                    mode="reset",
+                    params={
+                        "pose_range": {"x": (0.46, 0.46), "y": (-0.05, -0.05), "yaw": (-1.0, 1, 0)},
+                        "asset_cfgs": [SceneEntityCfg("stack_object"),],
+                    },
+                )
+                cfg.events.randomize_cube_positions_2 = EventTerm(
+                    func=franka_stack_events.randomize_object_pose,
+                    mode="reset",
+                    params={
+                        "pose_range": {"x": (0.54, 0.54), "y": (0.05, 0.05), "yaw": (-1.0, 1, 0)},
+                        "asset_cfgs": [SceneEntityCfg("target_cube")],
+                    },
+                )
+
+
         super().__init__(cfg, render_mode, **kwargs)
 
         # Set friction on stack_object at runtime (UsdFileCfg does not support physics_material)
@@ -27,15 +51,23 @@ class StackTactileEnv(ManagerBasedRLEnv):
 
         # Tactile saving settings (mirrored from ForgeEnv)
         self._save_tactile_force_field = os.environ.get("FORGE_SAVE_TACTILE_FORCE_FIELD", "0") == "1"
+        self._save_tactile_all_envs = os.environ.get("FORGE_SAVE_TACTILE_ALL_ENVS", "0") == "1"
         self._tactile_save_dir = os.environ.get("FORGE_TACTILE_SAVE_DIR", "./tactile_dataset/data")
         self._tactile_save_interval = int(os.environ.get("FORGE_TACTILE_SAVE_INTERVAL", "1"))
         self._tactile_reward_instruction = os.environ.get("FORGE_TACTILE_REWARD_INSTRUCTION", "stack an object on a box")
-        
+        self._tactile_max_buffer_frames = int(os.environ.get("FORGE_TACTILE_MAX_BUFFER_FRAMES", "500000"))
+        self._tactile_episodes_per_env = int(os.environ.get("FORGE_TACTILE_EPISODES_PER_ENV", "0"))  # 0 = unlimited
+
         if self._save_tactile_force_field:
             os.makedirs(self._tactile_save_dir, exist_ok=True)
-            self._tactile_episode_frames = []
+            if self._save_tactile_all_envs:
+                self._tactile_episode_frames = [[] for _ in range(self.num_envs)]
+                self._tactile_step_in_episode_per_env = [0] * self.num_envs
+            else:
+                self._tactile_episode_frames = []
             self._tactile_saved_episode_count = 0
             self._tactile_step_in_episode = 0
+            self._tactile_saved_per_env = [0] * self.num_envs  # episodes saved per env
             print(f"[StackTactileEnv] Saving tactile force field to: {self._tactile_save_dir}")
     
     def _get_tactile_vector_field(self, sensor_name: str):
@@ -49,25 +81,43 @@ class StackTactileEnv(ManagerBasedRLEnv):
         shear_force = sensor.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
         return torch.cat((normal_force, shear_force), dim=-1)
 
-    def _flush_tactile_episode(self, success: int = 0):
+    def _flush_tactile_episode(self, success: int = 0, env_id: int | None = None):
         """Write the buffered target-env tactile tensors for the current episode."""
-        if not self._save_tactile_force_field or not self._tactile_episode_frames:
+        if not self._save_tactile_force_field:
             return
 
-        episode_path = os.path.join(self._tactile_save_dir, f"ep{self._tactile_saved_episode_count}.npy")
-        episode_tensor = np.stack(self._tactile_episode_frames, axis=0).astype(np.float16, copy=False)
+        frames = (
+            self._tactile_episode_frames if env_id is None
+            else self._tactile_episode_frames[env_id]
+        )
+        if not frames:
+            return
+
+        if env_id is None:
+            fname = f"ep{self._tactile_saved_episode_count}.npy"
+        else:
+            fname = f"ep{self._tactile_saved_episode_count}_env{env_id:03d}.npy"
+
+        episode_path = os.path.join(self._tactile_save_dir, fname)
+        episode_tensor = np.stack(frames, axis=0).astype(np.float16, copy=False)
         payload = {
             "Task": self._tactile_reward_instruction,
             "Tactile": episode_tensor,
             "Success": int(success),
         }
         np.save(episode_path, payload, allow_pickle=True)
-        self._tactile_episode_frames.clear()
+        frames.clear()
         self._tactile_saved_episode_count += 1
+        if env_id is not None:
+            self._tactile_saved_per_env[env_id] += 1
 
     def _save_env0_tactile_force_field(self):
         """Buffer target-env tactile tensors and flush one .npy file per episode."""
         if not self._save_tactile_force_field:
+            return
+
+        if self._save_tactile_all_envs:
+            self._save_all_envs_tactile_force_field()
             return
 
         # Follow ForgeEnv logic: target env 0 (or some fixed env)
@@ -94,6 +144,51 @@ class StackTactileEnv(ManagerBasedRLEnv):
             self._tactile_episode_frames.append(combined_field.cpu().numpy())
         
         self._tactile_step_in_episode += 1
+
+    def _save_all_envs_tactile_force_field(self):
+        """Multi-env variant: every env keeps its own per-episode buffer."""
+        quota = self._tactile_episodes_per_env
+        reset_envs = torch.nonzero(self.reset_buf, as_tuple=False).flatten().tolist()
+        for env_id in reset_envs:
+            if quota > 0 and self._tactile_saved_per_env[env_id] >= quota:
+                self._tactile_episode_frames[env_id].clear()
+            else:
+                success = int(self.ep_succeeded[env_id].item())
+                self._flush_tactile_episode(success=success, env_id=env_id)
+            self._tactile_step_in_episode_per_env[env_id] = 0
+
+        if quota > 0 and all(c >= quota for c in self._tactile_saved_per_env):
+            print(
+                f"[TactileSave] All {self.num_envs} envs reached {quota} episodes "
+                f"({self._tactile_saved_episode_count} total)."
+            )
+            return
+
+        total_frames = sum(len(buf) for buf in self._tactile_episode_frames)
+        if total_frames >= self._tactile_max_buffer_frames:
+            if not getattr(self, "_tactile_overflow_warned", False):
+                print(
+                    f"[TactileSave] WARNING: per-env buffers hold {total_frames} "
+                    f"frames (cap {self._tactile_max_buffer_frames}); pausing "
+                    f"appends until next flush."
+                )
+                self._tactile_overflow_warned = True
+            for env_id in range(self.num_envs):
+                self._tactile_step_in_episode_per_env[env_id] += 1
+            return
+        self._tactile_overflow_warned = False
+
+        left_field = self._get_tactile_vector_field("left_tactile_sensor")
+        right_field = self._get_tactile_vector_field("right_tactile_sensor")
+
+        if left_field is not None and right_field is not None:
+            # (B, H, W, 6)
+            combined_fields = torch.cat((left_field, right_field), dim=-1).detach().cpu().numpy()
+            for env_id in range(self.num_envs):
+                step = self._tactile_step_in_episode_per_env[env_id]
+                if step % self._tactile_save_interval == 0:
+                    self._tactile_episode_frames[env_id].append(combined_fields[env_id].astype(np.float16, copy=False))
+                self._tactile_step_in_episode_per_env[env_id] = step + 1
 
     def step(self, action: torch.Tensor):
         # ManagerBasedRLEnv.step() calls _step_impl()
@@ -136,7 +231,13 @@ class StackTactileEnv(ManagerBasedRLEnv):
         return obs, info
 
     def close(self):
-        self._flush_tactile_episode(success=int(self.ep_succeeded[0].item()))
+        if self._save_tactile_force_field:
+            if self._save_tactile_all_envs:
+                # In multi-env mode, we typically only save episodes that completed (hit reset).
+                # Partial episodes at shutdown are discarded to avoid incomplete trajectories.
+                pass
+            else:
+                self._flush_tactile_episode(success=int(self.ep_succeeded[0].item()))
         super().close()
     
     def _post_physics_step(self):

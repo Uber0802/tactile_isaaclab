@@ -753,17 +753,16 @@ class VisuoTactileSensor(SensorBase):
             env_ids: Environment indices being updated
 
         """
-        depth = self._data.penetration_depth[env_ids]
-        tactile_normal_force = self._data.tactile_normal_force[env_ids]
-        tactile_shear_force = self._data.tactile_shear_force[env_ids]
+        # Zero buffers via direct index assignment. env_ids is always a LongTensor
+        # (sensor_base produces it via nonzero()), so tensor[env_ids] returns a copy —
+        # in-place ops on that copy never write back to self._data. Direct assignment
+        # self._data.x[env_ids] = value is the only form that actually modifies the buffer.
+        self._data.tactile_normal_force[env_ids] = 0.0
+        self._data.tactile_shear_force[env_ids] = 0.0
 
-        # Clear the output tensors
-        tactile_normal_force.zero_()
-        tactile_shear_force.zero_()
-        depth.zero_()
-
-        # Convert SDF values to penetration depth (positive for penetration)
-        depth[:] = torch.clamp(-sdf_values[env_ids], min=0.0)  # Negative SDF means inside (penetrating)
+        # Compute depth locally for force calculation; write back for external readers
+        depth = torch.clamp(-sdf_values[env_ids], min=0.0)
+        self._data.penetration_depth[env_ids] = depth
 
         # Get collision mask for points that are penetrating
         collision_mask = depth > 0.0
@@ -858,10 +857,9 @@ class VisuoTactileSensor(SensorBase):
                 self._data.tactile_points_quat_w[env_ids], tactile_force_world
             )
 
-            # Extract normal and shear components
-            # Assume tactile frame has Z as normal direction
-            tactile_normal_force[:] = tactile_force_tactile[..., 2]  # Z component
-            tactile_shear_force[:] = tactile_force_tactile[..., :2]  # X,Y components
+            # Extract normal and shear components and write directly to buffers
+            self._data.tactile_normal_force[env_ids] = tactile_force_tactile[..., 2]  # Z component
+            self._data.tactile_shear_force[env_ids] = tactile_force_tactile[..., :2]  # X,Y components
 
     #########################################################################################
     # Debug visualization
