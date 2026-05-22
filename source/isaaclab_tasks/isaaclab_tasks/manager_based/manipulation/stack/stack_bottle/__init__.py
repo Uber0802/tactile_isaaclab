@@ -13,10 +13,10 @@ import gymnasium as gym
 ##
 
 gym.register(
-    id="Isaac-Stack-Toybear-Franka-Gelsight-v0",
+    id="Isaac-Stack-Bottle-Franka-Gelsight-v0",
     entry_point="isaaclab_tasks.manager_based.manipulation.stack.stack_tactile_env:StackTactileEnv",
     kwargs={
-        "env_cfg_entry_point": f"{__name__}.stack_toybear_env_cfg:FrankaStackToybearEnvCfg",
+        "env_cfg_entry_point": f"{__name__}.stack_bottle_env_cfg:FrankaStackBottleEnvCfg",
         "rl_games_cfg_entry_point": f"{__name__}:rl_games_ppo_cfg.yaml",
     },
     disable_env_checker=True,

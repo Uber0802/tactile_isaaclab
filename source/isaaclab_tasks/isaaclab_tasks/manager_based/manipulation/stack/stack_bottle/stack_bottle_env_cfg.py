@@ -17,9 +17,6 @@ from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from isaaclab_tasks.direct.factory.factory_env_cfg import ASSET_DIR
 from isaaclab.utils import configclass
 
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
-from isaaclab_tasks.direct.factory.factory_tasks_cfg import Peg8mm
-
 from isaaclab_assets.sensors import GELSIGHT_R15_CFG
 from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensorCfg
 
@@ -31,15 +28,14 @@ from isaaclab_tasks.manager_based.manipulation.stack.stack_env_cfg import Observ
 # Pre-defined configs
 ##
 from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
-from isaaclab_assets.robots.franka import FRANKA_PANDA_CFG, FRANKA_PANDA_HIGH_PD_CFG  # isort: skip
-from isaaclab.assets import ArticulationCfg
+from isaaclab_assets.robots.franka import FRANKA_PANDA_CFG # isort: skip
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-LOCAL_PEG_INSERT_ROBOT_USD_PATH = "./franka_gelsight.usd"
+LOCAL_ROBOT_USD_PATH = "./franka_gelsight.usd"
 LOCAL_BLUE_BLOCK_USD  = "./assets/Props/blue_block_sdf.usd"
 LOCAL_RED_BLOCK_USD   = "./assets/Props/red_block_sdf.usd"
 LOCAL_GREEN_BLOCK_USD = "./assets/Props/green_block_sdf.usd"
-# LOCAL_TOY_BEAR_USD = "./assets/Props/toy_bear_rigid_sdf.usd"
-LOCAL_TOY_BEAR_USD = "./assets/Props/lighter.usd"
+LOCAL_BOTTLE_USD = "./assets/Props/bottle_sdf.usd"
 
 
 @configclass
@@ -67,23 +63,12 @@ class GelsightRewardsCfg(RewardsCfg):
     """Reward specifications for the Gelsight environment."""
 
     rewind_tactile_reward = RewTerm(func=mdp.rewind_tactile_reward, weight=0.2)
-    '''
-    ee_to_stack_object = RewTerm(
-        func=mdp.ee_to_stack_object_distance_reward,
-        params={
-            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
-            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
-            "max_distance": 0.25,
-            "max_reward": 1.0,
-        },
-        weight=0.5,
-    )
 
     stack_object_z_reward_exp = RewTerm(
         func=mdp.stack_object_z_reward_exp,
         params={
-            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
-            "max_z_distance": 0.0203 * 2 + 0.025,
+            "stack_object_cfg": SceneEntityCfg("bottle_bottom_frame"),
+            "max_z_distance": 0.0734, # 0.0112 0.0734604001045227 0.0568 0.0203
         },
         weight=1.0,
     )
@@ -91,10 +76,8 @@ class GelsightRewardsCfg(RewardsCfg):
     stack_object_xy_precision = RewTerm(
         func=mdp.stack_object_precision_xy_reward,
         params={
-            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
-            "target_cube_cfg": SceneEntityCfg("target_cube"), 
-            "stack_height_offset": 0.0406,
-            "height_tolerance": 0.005,
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
+            "target_cube_cfg": SceneEntityCfg("target_cube"),
             "max_xy_distance": 0.16,
             "max_reward": 0.1,
         },
@@ -104,9 +87,9 @@ class GelsightRewardsCfg(RewardsCfg):
     stack_object_xy_precision_exp = RewTerm(
         func=mdp.stack_object_precision_xy_reward_exp,
         params={
-            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0406,
+            "stack_height_offset": 0.0365,
             "height_tolerance": 0.005,
             "distance_offset": 0.1,
             "decay_rate": 30.0,
@@ -117,24 +100,26 @@ class GelsightRewardsCfg(RewardsCfg):
     target_cube_home_penalty = RewTerm(
         func=mdp.target_cube_original_xy_penalty,
         params={
-            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0406,
-            "height_tolerance": 0.005,
+            "stack_height_offset": 0.0365,
+            "height_tolerance": 0.01,
             "penalty_scale": 5.0,
         },
         weight=-1.0,
     )
+
     stack_success = RewTerm(
         func=mdp.stack_success,
         params={
             "robot_cfg": SceneEntityCfg("robot"),
-            "stack_object_cfg": SceneEntityCfg("peg_center_frame"),
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
+            "height_diff": 0.0365,
+            "height_threshold": 0.01
         },
         weight=10.0,
     )
-    '''
     
 
 @configclass
@@ -163,15 +148,15 @@ class EventCfg:
         func=franka_stack_events.randomize_object_pose,
         mode="reset",
         params={
-            "pose_range": {"x": (0.4, 0.6), "y": (-0.10, 0.10), "yaw": (-1.0, 1, 0)},
-            "min_separation": 0.1,
+            "pose_range": {"x": (0.3, 0.7), "y": (-0.20, 0.20), "yaw": (-1.0, 1, 0)},
+            "min_separation": 0.3,
             "asset_cfgs": [SceneEntityCfg("stack_object"), SceneEntityCfg("target_cube")],
         },
     )
 
 
 @configclass
-class FrankaStackToybearEnvCfg(StackEnvCfg):
+class FrankaStackBottleEnvCfg(StackEnvCfg):
     """Configuration for the Franka Gelsight Environment."""
 
     # Override the observations and rewards
@@ -224,6 +209,13 @@ class FrankaStackToybearEnvCfg(StackEnvCfg):
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
+        
+        self.sim.physx.enable_ccd = True
+        self.decimation = 10
+        self.episode_length_s = 10.0
+        # simulation settings
+        self.sim.dt = 0.005  # 100Hz
+        self.sim.render_interval = 10
 
         # Set events
         self.events = EventCfg()
@@ -232,11 +224,11 @@ class FrankaStackToybearEnvCfg(StackEnvCfg):
         self.scene.robot = FRANKA_PANDA_CFG.replace(
             prim_path="{ENV_REGEX_NS}/Robot",
             spawn=sim_utils.UsdFileWithCompliantContactCfg(
-                usd_path=LOCAL_PEG_INSERT_ROBOT_USD_PATH,
+                usd_path=LOCAL_ROBOT_USD_PATH,
                 activate_contact_sensors=True,
                 rigid_props=FRANKA_PANDA_CFG.spawn.rigid_props,
                 articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                    enabled_self_collisions=False, solver_position_iteration_count=8, solver_velocity_iteration_count=0
+                    enabled_self_collisions=False, solver_position_iteration_count=8, solver_velocity_iteration_count=1
                 ),
                 collision_props=FRANKA_PANDA_CFG.spawn.collision_props,
                 compliant_contact_stiffness=1000.0,
@@ -261,7 +253,7 @@ class FrankaStackToybearEnvCfg(StackEnvCfg):
 
         # Set actions for the specific robot type (franka)
         self.actions.arm_action = mdp.JointPositionActionCfg(
-            asset_name="robot", joint_names=["panda_joint[1-7]"], scale=0.5, use_default_offset=True
+            asset_name="robot", joint_names=["panda_joint[1-7]"], scale=1.0, use_default_offset=True
         )
         # self.actions.gripper_action = mdp.AbsBinaryJointPositionActionCfg(
         self.actions.gripper_action = mdp.BinaryJointPositionActionCfg(
@@ -281,17 +273,16 @@ class FrankaStackToybearEnvCfg(StackEnvCfg):
             solver_velocity_iteration_count=1,
             max_angular_velocity=1000.0,
             max_linear_velocity=1000.0,
-            max_depenetration_velocity=1.0,
+            max_depenetration_velocity=100.0,
             disable_gravity=False,
         )
 
         # Set each stacking cube deterministically
         self.scene.stack_object = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/stack_object",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0, 0.1), rot=(0.707, 0, 0, 0.707)),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0, 0.0113), rot=(1, 0, 0, 0)),
             spawn=sim_utils.UsdFileCfg(
-                usd_path=LOCAL_TOY_BEAR_USD,
-                scale=(0.002, 0.002, 0.002),
+                usd_path=LOCAL_BOTTLE_USD,
                 rigid_props=cube_properties,
             ),
         )
@@ -300,8 +291,8 @@ class FrankaStackToybearEnvCfg(StackEnvCfg):
             prim_path="{ENV_REGEX_NS}/target_cube",
             init_state=RigidObjectCfg.InitialStateCfg(pos=[0.0, 0.00, 0.0203], rot=[1, 0, 0, 0]),
             spawn=UsdFileCfg(
-                usd_path=LOCAL_RED_BLOCK_USD,
-                scale=(1.0, 1.0, 1.0),
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/blue_block.usd",
+                scale=(1, 1, 1),
                 rigid_props=cube_properties,
                 semantic_tags=[("class", "target_cube")],
             ),
@@ -339,19 +330,17 @@ class FrankaStackToybearEnvCfg(StackEnvCfg):
                 ),
             ],
         )
-        
-        '''
-        # Frame transformer to continuously track the peg's volumetric center
-        self.scene.peg_center_frame = FrameTransformerCfg(
-            prim_path="{ENV_REGEX_NS}/stack_object/forge_round_peg_8mm",
-            debug_vis=False,  # Set to True to see an axis marker exactly at the peg's center!
-            visualizer_cfg=marker_cfg,
-            target_frames=[
-                FrameTransformerCfg.FrameCfg(
-                    prim_path="{ENV_REGEX_NS}/stack_object/forge_round_peg_8mm",
-                    name="peg_center",
-                    offset=OffsetCfg(pos=(0.0, 0.0, 0.025)),
-                ),
-            ],
-        )
-        '''
+        self.scene.bottle_bottom_frame = FrameTransformerCfg(                                                                                                                          
+                prim_path="{ENV_REGEX_NS}/stack_object/_06_mustard_bottle",                                                                                                                
+                debug_vis=False,  # Set to True to see an axis marker exactly at the bottle's bottom!                                                                                      
+                visualizer_cfg=marker_cfg,                                                                                                                                                 
+                target_frames=[                                                                                                                                                            
+                    FrameTransformerCfg.FrameCfg(                                                                                                                                          
+                        prim_path="{ENV_REGEX_NS}/stack_object/_06_mustard_bottle",                                                                                                        
+                        name="bottle_bottom",                                                                                                                                              
+                        offset=OffsetCfg(                                                                                                                                                  
+                            pos=(0.0, -0.0478, 0.0),  # Offset along the local Y-axis (bottle bottom)                                                                                      
+                        ),                                                                                                                                                                 
+                    ),                                                                                                                                                                     
+                ],                                                                                                                                                                         
+            )      

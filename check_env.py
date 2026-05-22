@@ -14,7 +14,9 @@ from isaaclab.assets import Articulation, RigidObject
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.manager_based.manipulation.stack.stack_box.stack_box_env_cfg import FrankaStackBoxEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_peg.stack_peg_env_cfg import FrankaStackPegEnvCfg
-from isaaclab_tasks.manager_based.manipulation.stack.stack_toybear.stack_toybear_env_cfg import FrankaStackToybearEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.stack_banana.stack_banana_env_cfg import FrankaStackBananaEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.stack_bowl.stack_bowl_env_cfg import FrankaStackBowlEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.stack_mug.stack_mug_env_cfg import FrankaStackMugEnvCfg
 from isaaclab_contrib.sensors.tacsl_sensor.visuotactile_render import compute_tactile_shear_image
 
 # --- IK and Teleop imports ---
@@ -58,9 +60,12 @@ def run_manual_test(env):
     """
     for cube_name in ["stack_object", "target_cube"]:
         cube_asset = env.unwrapped.scene[cube_name]
-        materials = cube_asset.root_physx_view.get_material_properties()
-        mass = cube_asset.root_physx_view.get_masses() 
-        print(materials, mass)
+        try:
+            materials = cube_asset.root_physx_view.get_material_properties()
+            mass = cube_asset.root_physx_view.get_masses() 
+            print(f"Asset: {cube_name}, Materials: {materials}, Mass: {mass}")
+        except Exception as e:
+            print(f"Could not get physics properties for {cube_name}: {e}")
 
     state = 0
     sim_steps = 0
@@ -180,9 +185,9 @@ def run_manual_test(env):
 
 
 def main():
-    print("Creating Isaac-Stack-Cube-Franka-Gelsight-v0 environment with IK control...")
+    print("Creating Isaac-Stack-Banana-Franka-Gelsight-v0 environment with IK control...")
     
-    env_cfg = FrankaStackBoxEnvCfg()
+    env_cfg = FrankaStackBowlEnvCfg()
     env_cfg.scene.num_envs = 1
     env_cfg.episode_length_s = 1000.0 # Extend episode length to 1000 seconds for manual debugging
     
@@ -204,7 +209,7 @@ def main():
         body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.0, 0.0, 0.107]),
     )
     
-    env = gym.make("Isaac-Stack-Cube-Franka-Gelsight-v0", cfg=env_cfg)
+    env = gym.make("Isaac-Stack-Bowl-Franka-Gelsight-v0", cfg=env_cfg)
     
     run_manual_test(env)
 
