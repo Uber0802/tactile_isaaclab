@@ -17,7 +17,7 @@ TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-NutThread-PickPlace-Direct-v0 \
-    --baseline A_hard \
+    --baseline A_hard_success \
     --headless \
     --num_envs 256 \
     --max_iterations 10000 \
@@ -25,6 +25,6 @@ TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name NutThread_PickPlace_baselineA_hard \
-    agent.params.config.full_experiment_name=NutThread_PickPlace_baselineA_hard \
+    --wandb-name NutThread_PickPlace_baselineA_hard_success_-2 \
+    agent.params.config.full_experiment_name=NutThread_PickPlace_baselineA_hard_success_-2 \
     agent.params.config.save_frequency=20

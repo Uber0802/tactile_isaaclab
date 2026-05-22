@@ -345,10 +345,26 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         )
         gear_to_target_xy = torch.norm(held_base_pos[:, 0:2] - target_held_base_pos[:, 0:2], dim=-1)
         gear_above_target_z = held_base_pos[:, 2] - target_held_base_pos[:, 2]
-        # Symmetric z distance — using clamp(z, min=0) lets the policy farm the
-        # z-progress reward by parking the gear slightly below target without
-        # actually meshing. |z_above_target| punishes deviations either way.
-        z_dist = torch.abs(gear_above_target_z)
+        # z_dist centered on the "ideal" z_disp = the threshold at which success
+        # turns True (shaft_height * success_threshold). Two regimes:
+        #   - success_threshold ≥ 0 (original A): ideal ≈ target z. Use abs() so
+        #     deviations in either direction lose reward — prevents the farming
+        #     bug where policy parks slightly below target without actually
+        #     meshing.
+        #   - success_threshold < 0 (A_hard_success, e.g. -0.3 → 15mm deep):
+        #     ideal is BELOW target z (gear must thread down). Use one-sided
+        #     clamp so going past ideal toward the physical bottom keeps full
+        #     reward — fixes the "park at z_disp≈0 = local max" trap that
+        #     otherwise stops the policy from pressing down enough for the
+        #     tactile sensor to differentiate gear-shaft yaw alignment.
+        ideal_z_disp = (self.cfg_task.fixed_asset_cfg.height
+                        * self.cfg_task.success_threshold)
+        if ideal_z_disp >= 0:
+            z_dist = torch.abs(gear_above_target_z)
+        else:
+            z_dist = torch.clamp(gear_above_target_z - ideal_z_disp, min=0.0)
+        # How far above the success-boundary z the gear still is (0 = at/past).
+        dist_to_success_z = torch.clamp(gear_above_target_z - ideal_z_disp, min=0.0)
 
         # (4) Fine XY + Z descent reward — keeps gradient alive all the way down
         # to the (2.5 mm xy, 1 mm z) success tolerances.
@@ -409,6 +425,8 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         self.extras["logs_gear_to_target_xy_min"] = gear_to_target_xy.min()
         self.extras["logs_gear_above_target_z"] = gear_above_target_z.mean()
         self.extras["logs_z_dist_mean"] = z_dist.mean()
+        self.extras["logs_dist_to_success_z"] = dist_to_success_z.mean()
+        self.extras["logs_dist_to_success_z_min"] = dist_to_success_z.min()
         self.extras["logs_yaw_diff_abs"] = torch.abs(yaw_diff).mean()
         self.extras["logs_rew_yaw"] = r_yaw.mean()
         self.extras["logs_rew_xy_align"] = r_xy_align.mean()
@@ -436,6 +454,7 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
                 f"gearV(mean/max)={gear_speed.mean().item():.2f}/{gear_speed.max().item():.2f} "
                 f"gear2tgt_xy(min/mean)={gear_to_target_xy.min().item():.4f}/{gear_to_target_xy.mean().item():.4f} "
                 f"gear_z_rel_tgt(min/mean)={gear_above_target_z.min().item():+.4f}/{gear_above_target_z.mean().item():+.4f} "
+                f"distToSuccZ(mean/min)={dist_to_success_z.mean().item():.4f}/{dist_to_success_z.min().item():.4f} "
                 f"yaw_diff_abs(mean)={torch.abs(yaw_diff).mean().item():.3f} "
                 f"r_xy_align={r_xy_align.mean().item():.3f} "
                 f"r_z_descend={r_z_descend.mean().item():.3f} "
