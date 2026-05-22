@@ -20,7 +20,7 @@ from isaaclab_tasks.manager_based.manipulation.stack.stack_mug.stack_mug_env_cfg
 from isaaclab_contrib.sensors.tacsl_sensor.visuotactile_render import compute_tactile_shear_image
 
 # --- IK and Teleop imports ---
-from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
+from isaaclab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg, JointPositionActionCfg
 from isaaclab.controllers.differential_ik_cfg import DifferentialIKControllerCfg
 from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
 from isaaclab.devices.keyboard import Se3Keyboard, Se3KeyboardCfg
@@ -50,7 +50,7 @@ def save_gelsight_full_visualization(sensor_data, filename_prefix, title_prefix=
         tactile_ff_img = None
 
 
-def run_manual_test(env):
+def run_manual_test(env, gripper_fixed_position=0.015, pos_sensitivity=0.05, rot_sensitivity=0.15):
     """
     States: 
     0: Move above box
@@ -78,8 +78,8 @@ def run_manual_test(env):
 
     # Setup Teleop Interface for manual control and callbacks
     teleop_cfg = Se3KeyboardCfg(
-        pos_sensitivity=0.01,
-        rot_sensitivity=0.05,
+        pos_sensitivity=pos_sensitivity,
+        rot_sensitivity=rot_sensitivity,
         sim_device=env.unwrapped.device,
     )
     teleop_interface = Se3Keyboard(teleop_cfg)
@@ -123,7 +123,12 @@ def run_manual_test(env):
 
         if user_state["mode"] == "manual":
             # Direct teleop
-            actions = manual_actions.unsqueeze(0)
+            actions = torch.zeros(env.unwrapped.num_envs, env.unwrapped.action_manager.total_action_dim, device=env.unwrapped.device)
+            actions[:, 0:6] = manual_actions[0:6]
+            if manual_actions[6] > 0.0:
+                actions[:, 6:8] = gripper_fixed_position
+            else:
+                actions[:, 6:8] = 0
         else:
             # 1. Define your action tensor [num_envs, action_dim]
             actions = torch.zeros(env.unwrapped.num_envs, env.unwrapped.action_manager.total_action_dim, device=env.unwrapped.device)
@@ -136,21 +141,21 @@ def run_manual_test(env):
             if state == 0: # Move above box
                 target_pos = stack_object_pos + torch.tensor([0.0, 0.0, 0.1], device=env.unwrapped.device)
                 actions[:, 0:3] = (target_pos - gripper_pos) * 5.0 # P-control to target
-                actions[:, -1] = 1.0 # Keep gripper open
+                actions[:, 6:8] = 0.04 # Keep gripper open
                 if torch.norm(target_pos - gripper_pos) < 0.02: 
                     state = 1
                     print("Auto State: Lower to box")
 
             elif state == 1: # Lower to box
                 actions[:, 0:3] = (stack_object_pos - gripper_pos) * 5.0
-                actions[:, -1] = 1.0 
+                actions[:, 6:8] = 0.04 
                 if torch.norm(stack_object_pos - gripper_pos) < 0.01: 
                     state = 2
                     print("Auto State: Close gripper")
 
             elif state == 2: # CLOSE GRIPPER
                 actions[:, 0:3] = 0.0 # Stay still
-                actions[:, -1] = -1.0 # Send maximum CLOSE command
+                actions[:, 6:8] = gripper_fixed_position # Send target fixed position command
                 sim_steps += 1
                 if sim_steps > 50: 
                     state = 3 # Wait for 50 steps to ensure grip
@@ -158,7 +163,7 @@ def run_manual_test(env):
 
             elif state == 3: # Lift
                 actions[:, 2] = 0.5 # Move Up
-                actions[:, -1] = -1.0 # Maintain grip
+                actions[:, 6:8] = gripper_fixed_position # Maintain target fixed position command
 
         # 3. Step the environment
         obs, rew, terminated, truncated, info = env.step(actions)
@@ -185,9 +190,31 @@ def run_manual_test(env):
 
 
 def main():
-    print("Creating Isaac-Stack-Banana-Franka-Gelsight-v0 environment with IK control...")
+    import sys
+    gripper_fixed_position = 0.04
+    if "--gripper_pos" in sys.argv:
+        idx = sys.argv.index("--gripper_pos")
+        if idx + 1 < len(sys.argv):
+            gripper_fixed_position = float(sys.argv[idx + 1])
+
+    pos_sensitivity = 0.05
+    if "--pos_sens" in sys.argv:
+        idx = sys.argv.index("--pos_sens")
+        if idx + 1 < len(sys.argv):
+            pos_sensitivity = float(sys.argv[idx + 1])
+
+    rot_sensitivity = 0.15
+    if "--rot_sens" in sys.argv:
+        idx = sys.argv.index("--rot_sens")
+        if idx + 1 < len(sys.argv):
+            rot_sensitivity = float(sys.argv[idx + 1])
+
+    print(f"Creating Isaac-Stack-Banana-Franka-Gelsight-v0 environment with IK control:")
+    print(f"  gripper fixed position: {gripper_fixed_position}")
+    print(f"  pos_sensitivity: {pos_sensitivity}")
+    print(f"  rot_sensitivity: {rot_sensitivity}")
     
-    env_cfg = FrankaStackBowlEnvCfg()
+    env_cfg = FrankaStackBananaEnvCfg()
     env_cfg.scene.num_envs = 1
     env_cfg.episode_length_s = 1000.0 # Extend episode length to 1000 seconds for manual debugging
     
@@ -199,7 +226,7 @@ def main():
     env_cfg.scene.robot.actuators["panda_forearm"].stiffness = 400.0
     env_cfg.scene.robot.actuators["panda_forearm"].damping = 80.0
 
-    # Set actions for the specific robot type to use IK
+    # Set arm actions for the specific robot type to use IK
     env_cfg.actions.arm_action = DifferentialInverseKinematicsActionCfg(
         asset_name="robot",
         joint_names=["panda_joint.*"],
@@ -208,10 +235,23 @@ def main():
         scale=0.5,
         body_offset=DifferentialInverseKinematicsActionCfg.OffsetCfg(pos=[0.0, 0.0, 0.107]),
     )
+
+    # Set gripper actions to use continuous joint position control
+    env_cfg.actions.gripper_action = JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=["panda_finger.*"],
+        scale=1.0,
+        use_default_offset=False,
+    )
     
-    env = gym.make("Isaac-Stack-Bowl-Franka-Gelsight-v0", cfg=env_cfg)
+    env = gym.make("Isaac-Stack-Banana-Franka-Gelsight-v0", cfg=env_cfg)
     
-    run_manual_test(env)
+    run_manual_test(
+        env,
+        gripper_fixed_position=gripper_fixed_position,
+        pos_sensitivity=pos_sensitivity,
+        rot_sensitivity=rot_sensitivity
+    )
 
     env.close()
     simulation_app.close()

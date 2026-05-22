@@ -33,10 +33,7 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 
 LOCAL_ROBOT_USD_PATH = "./franka_gelsight.usd"
-LOCAL_BLUE_BLOCK_USD  = "./assets/Props/blue_block_sdf.usd"
-LOCAL_RED_BLOCK_USD   = "./assets/Props/red_block_sdf.usd"
-LOCAL_GREEN_BLOCK_USD = "./assets/Props/green_block_sdf.usd"
-LOCAL_BANANA_USD = "./assets/OldProps/banana_sdf.usd"
+LOCAL_BANANA_USD = "./assets/Props/banana_sdf.usd"
 
 
 @configclass
@@ -69,7 +66,7 @@ class GelsightRewardsCfg(RewardsCfg):
         func=mdp.stack_object_z_reward_exp,
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
-            "max_z_distance": 0.1 #0.009748824872076511 0.03225264325737953 0.07887043058872223
+            "max_z_distance": 0.11 #0.0096 0.03225264325737953 0.07887043058872223
         },
         weight=1.0,
     )
@@ -79,7 +76,7 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0466,
+            "stack_height_offset": 0.057,
             "height_tolerance": 0.005,
             "max_xy_distance": 0.16,
             "max_reward": 0.1,
@@ -92,7 +89,7 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0466, 
+            "stack_height_offset": 0.057, 
             "height_tolerance": 0.01,
             "distance_offset": 0.1,
             "decay_rate": 30.0,
@@ -105,7 +102,7 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0466,
+            "stack_height_offset": 0.057,
             "height_tolerance": 0.01,
             "penalty_scale": 5.0,
         },
@@ -118,7 +115,7 @@ class GelsightRewardsCfg(RewardsCfg):
             "robot_cfg": SceneEntityCfg("robot"),
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "height_diff": 0.0466,
+            "height_diff": 0.057,
             "height_threshold": 0.01
         },
         weight=10.0,
@@ -175,9 +172,9 @@ class FrankaStackBananaEnvCfg(StackEnvCfg):
         tactile_array_size=(20, 25),
         tactile_margin=0.003,
         contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
-        normal_contact_stiffness=1000.0,
+        normal_contact_stiffness=1.0,
         friction_coefficient=2.0,
-        tangential_stiffness=100.0,
+        tangential_stiffness=0.1,
         camera_cfg=TiledCameraCfg(
             prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_tip_link/cam",
             update_period=1 / 15,
@@ -196,9 +193,9 @@ class FrankaStackBananaEnvCfg(StackEnvCfg):
         tactile_array_size=(20, 25),
         tactile_margin=0.003,
         contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
-        normal_contact_stiffness=1000.0,
+        normal_contact_stiffness=1.0,
         friction_coefficient=2.0,
-        tangential_stiffness=100.0,
+        tangential_stiffness=0.1,
         camera_cfg=TiledCameraCfg(
             prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_tip_link/cam",
             update_period=1 / 15,
@@ -227,8 +224,8 @@ class FrankaStackBananaEnvCfg(StackEnvCfg):
                     enabled_self_collisions=False, solver_position_iteration_count=16, solver_velocity_iteration_count=0
                 ),
                 collision_props=FRANKA_PANDA_CFG.spawn.collision_props,
-                compliant_contact_stiffness=5000.0,
-                compliant_contact_damping=200.0,
+                compliant_contact_stiffness=1000.0,
+                compliant_contact_damping=100.0,
                 physics_material_prim_path=[
                     "left_elastomer_link",
                     "right_elastomer_link",
@@ -276,7 +273,7 @@ class FrankaStackBananaEnvCfg(StackEnvCfg):
         # Set each stacking cube deterministically
         self.scene.stack_object = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/stack_object",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0, 0.00525), rot=(1, 0, 0, 0)),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0, 0.0096), rot=(1, 0, 0, 0)),
             spawn=sim_utils.UsdFileCfg(
                 usd_path=LOCAL_BANANA_USD,
                 rigid_props=cube_properties,
@@ -285,10 +282,10 @@ class FrankaStackBananaEnvCfg(StackEnvCfg):
 
         self.scene.target_cube = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/target_cube",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.0, 0.00, 0.0203], rot=[1, 0, 0, 0]),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.0, 0.00, 0.044], rot=[1, 0, 0, 0]),
             spawn=UsdFileCfg(
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/blue_block.usd",
-                scale=(3, 3, 3),
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/red_block.usd",
+                scale=(2, 2, 2),
                 rigid_props=cube_properties,
                 semantic_tags=[("class", "target_cube")],
             ),

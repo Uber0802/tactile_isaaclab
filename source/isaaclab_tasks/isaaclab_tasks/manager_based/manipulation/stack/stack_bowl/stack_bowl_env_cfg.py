@@ -29,11 +29,9 @@ from isaaclab_tasks.manager_based.manipulation.stack.stack_env_cfg import Observ
 ##
 from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
 from isaaclab_assets.robots.franka import FRANKA_PANDA_CFG # isort: skip
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 LOCAL_ROBOT_USD_PATH = "./franka_gelsight.usd"
-LOCAL_BLUE_BLOCK_USD  = "./assets/Props/blue_block_sdf.usd"
-LOCAL_RED_BLOCK_USD   = "./assets/Props/red_block_sdf.usd"
-LOCAL_GREEN_BLOCK_USD = "./assets/Props/green_block_sdf.usd"
 LOCAL_BOWL_USD = "./assets/Props/bowl_sdf.usd"
 
 
@@ -67,7 +65,7 @@ class GelsightRewardsCfg(RewardsCfg):
         func=mdp.stack_object_z_reward_exp,
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
-            "max_z_distance": 0.0575,
+            "max_z_distance": 0.072,
         },
         weight=1.0,
     )
@@ -77,7 +75,7 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0372,
+            "stack_height_offset": 0.0374,
             "height_tolerance": 0.005,
             "max_xy_distance": 0.16,
             "max_reward": 0.1,
@@ -90,7 +88,7 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0372,
+            "stack_height_offset": 0.0374,
             "height_tolerance": 0.005,
             "distance_offset": 0.1,
             "decay_rate": 30.0,
@@ -103,7 +101,7 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0372,
+            "stack_height_offset": 0.0374,
             "height_tolerance": 0.005,
             "penalty_scale": 5.0,
         },
@@ -116,7 +114,7 @@ class GelsightRewardsCfg(RewardsCfg):
             "robot_cfg": SceneEntityCfg("robot"),
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "height_diff": 0.0372
+            "height_diff": 0.0374,
         },
         weight=10.0,
     )
@@ -252,12 +250,12 @@ class FrankaStackBowlEnvCfg(StackEnvCfg):
         self.actions.gripper_action = mdp.BinaryJointPositionActionCfg(
             asset_name="robot",
             joint_names=["panda_finger.*"],
-            open_command_expr={"panda_finger_.*": 0.04},
+            open_command_expr={"panda_finger_.*": 0.015},
             close_command_expr={"panda_finger_.*": 0.0},
         )
         # utilities for gripper status check
         self.gripper_joint_names = ["panda_finger_.*"]
-        self.gripper_open_val = 0.04
+        self.gripper_open_val = 0.015
         self.gripper_threshold = 0.005
 
         # Rigid body properties of each cube
@@ -282,9 +280,9 @@ class FrankaStackBowlEnvCfg(StackEnvCfg):
 
         self.scene.target_cube = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/target_cube",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.0, 0.00, 0.0234], rot=[1, 0, 0, 0]),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.0, 0.00, 0.0203], rot=[1, 0, 0, 0]),
             spawn=UsdFileCfg(
-                usd_path=LOCAL_BLUE_BLOCK_USD,
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/blue_block.usd",
                 scale=(1.0, 1.0, 1.0),
                 rigid_props=cube_properties,
                 semantic_tags=[("class", "target_cube")],

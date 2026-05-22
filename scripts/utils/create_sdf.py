@@ -12,6 +12,13 @@ parser = argparse.ArgumentParser(
 )
 
 parser.add_argument(
+    "--input",
+    type=str,
+    default="",
+    help="Input USD file.",
+)
+
+parser.add_argument(
     "--output",
     type=str,
     default="assets/Props/bowl_sdf.usd",
