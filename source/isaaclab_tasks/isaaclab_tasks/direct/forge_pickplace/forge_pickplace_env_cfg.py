@@ -92,6 +92,12 @@ class ForgeTaskPegInsertPickPlaceCfg(ForgeTaskPegInsertCfg):
     def apply_baseline(self, baseline: str) -> None:
         if baseline == "A":
             return
+        if baseline == "A_legacy":
+            self._apply_baseline_A_legacy()
+            return
+        if baseline == "A_hard_success":
+            self._apply_baseline_A_hard_success()
+            return
         if baseline == "B":
             self._apply_baseline_B()
             return
@@ -103,11 +109,75 @@ class ForgeTaskPegInsertPickPlaceCfg(ForgeTaskPegInsertCfg):
             return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskPegInsertPickPlaceCfg. "
-            f"Implemented: A (frozen), B (tactile force fields), "
+            f"Implemented: A (frozen), "
+            f"A_legacy (May 15 commit ed32dd8 shaping — no transport bridges), "
+            f"A_hard_success (A obs + transport shapings off + tight success), "
+            f"B (tactile force fields), "
             f"B2 (frozen ReWiND CNN -> 768-dim embedding), "
             f"single_pos (A obs + all reset position randomization zeroed, "
             f"source hole at +10cm X from destination)."
         )
+
+    def _apply_baseline_A_legacy(self) -> None:
+        """A_legacy: midway between today's default A (full shaping, easy) and
+        the strict May-15 setting (no transport bridges, baseline stuck at 0%
+        after 57h). Designed so baselineA can solve the task eventually but
+        slower than today's default, leaving clean headroom for tactile reward
+        to demonstrate a measurable speedup / final-success boost.
+
+        Difference vs current A (today's default):
+          - `xy_align_reward_scale = 0.5`: today's coarse XY bridge is 1.5;
+            halved here so transport-phase XY pull is weaker but non-zero
+            (earlier 0.0 left baseline floating 67mm above target indefinitely).
+          - `z_align_reward_scale = 0.5`: today's coarse Z bridge is 1.5;
+            halved here so the policy still gets a descent gradient during
+            transport, just weaker.
+          - `descent_xy_threshold = 0.01`: today's value is 4cm; reverting to
+            1cm keeps the final-insertion gate strict so the policy must
+            actually align precisely before getting r_descent.
+
+        Result vs original strict-0 A_legacy: baselineA should reach success
+        eventually (slow), tactile still wins by providing the explicit
+        peg-in-hole contact signal that supplements the half-strength bridges.
+        Vs default A: baseline is slower (half bridges + tight descent gate),
+        so tactile's contribution is measurable rather than buried in noise.
+        """
+        self.task.xy_align_reward_scale = 0.5
+        self.task.z_align_reward_scale = 0.5
+        self.task.descent_xy_threshold = 0.01
+
+    def _apply_baseline_A_hard_success(self) -> None:
+        """A_hard_success: same obs/state as A, but the transport-phase coarse
+        gradients (xy_align, z_align) are cut and the success criterion is
+        tightened so the peg must be fully bottomed in the destination hole.
+
+        Peg has no yaw_reward (cylindrical symmetry, action space rolls/pitch
+        also locked), so the nut/gear "cut yaw" trick doesn't apply. Instead,
+        the harder regime here strips:
+
+          - `xy_align_reward_scale = 0.0`: removes the dense coarse XY gradient
+            (r_xy_align = r_lift * xy_coarse, ~5cm scale) that pulled the peg
+            horizontally toward the destination during transport. Policy now
+            relies on factory keypoint reward (sparse-ish) to find the hole.
+          - `z_align_reward_scale = 0.0`: removes the dense coarse Z bridge
+            (r_z_descend = r_lift * xy_coarse * z_coarse, ~5cm scale) that
+            pulled the peg down once xy-aligned. Without this, the only z
+            gradient is the sharp `r_descent` which fires only within ~1cm of
+            target z — leaving a large dead zone in the transport phase.
+          - `success_threshold = 0.0`: factory's check is
+            `z_disp < hole_height * success_threshold`. Original 0.04 allowed
+            the peg to be ~1mm above the hole base (peg "barely inserted")
+            to count as success. With 0.0 the peg must actually touch the
+            hole bottom — no slack. Combined with the cut transport gradients,
+            the policy can only succeed with a clean approach + drop into the
+            hole using residual signals (approach, lift, sharp r_descent,
+            factory keypoint).
+        """
+        # Reward shaping ablation: cut both coarse transport gradients.
+        self.task.xy_align_reward_scale = 0.0
+        self.task.z_align_reward_scale = 0.0
+        # Tighter success: peg must reach the hole bottom (no above-target slack).
+        self.task.success_threshold = 0.0
 
     def _apply_baseline_single_pos(self) -> None:
         """Single-position baseline: identical to A in obs/state, but every

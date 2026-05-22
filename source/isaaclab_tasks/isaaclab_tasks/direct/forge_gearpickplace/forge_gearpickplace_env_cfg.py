@@ -98,6 +98,15 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
     def apply_baseline(self, baseline: str) -> None:
         if baseline == "A":
             return
+        if baseline == "A_hard":
+            self._apply_baseline_A_hard()
+            return
+        if baseline == "A_hard_success":
+            self._apply_baseline_A_hard_success()
+            return
+        if baseline == "A_hard_success_yaw01":
+            self._apply_baseline_A_hard_success_yaw01()
+            return
         if baseline == "B":
             self._apply_baseline_B()
             return
@@ -109,10 +118,82 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
             return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskGearMeshPickPlaceCfg. "
-            f"Implemented: A (frozen), B (tactile force fields), "
+            f"Implemented: A (frozen), A_hard (A obs + yaw_reward=0), "
+            f"A_hard_success (A_hard + success requires gear half-shaft deep), "
+            f"B (tactile force fields), "
             f"B2 (frozen ReWiND CNN -> 768-dim embedding), "
             f"single_pos (A obs + all reset position randomization zeroed)."
         )
+
+    def _apply_baseline_A_hard(self) -> None:
+        """A_hard: same obs/state AND same randomization as A, only the dense
+        yaw shaping is cut. Designed as a "shaping-insufficient" regime to test
+        whether tactile reward can fill the gap left by removing the
+        yaw-alignment gradient — gears need <6° yaw match for teeth to mesh,
+        but `fixed_yaw` is already fully randomized (0..360°) so without dense
+        yaw gradient the policy has to find the matching angle from sparse
+        `curr_engaged`/`curr_success` bonuses alone.
+        """
+        self.task.yaw_reward_scale = 0.0
+        # (randomization knobs intentionally unchanged — only the reward shaping
+        # is ablated; this isolates the effect of yaw_reward removal.)
+
+    def _apply_baseline_A_hard_success(self) -> None:
+        """A_hard_success: A_hard ablation (yaw_reward=0) PLUS a tighter
+        success criterion that requires meaningful teeth engagement —
+        gear must descend ~30% of the shaft height (15mm below target z),
+        not just the original "barely touching" 2.5mm-above-target slack.
+
+        Why this matters: factory's gear_mesh success check only requires
+        `xy_dist < 2.5mm` and `z_disp < shaft_height * success_threshold`, with
+        `check_rot=False` (factory_env.py:439 only sets check_rot for nut).
+        With success_threshold=+0.05 the gear satisfies success while still
+        hovering 2.5mm above the shaft top — yaw never has to align for the
+        teeth to physically mesh, so `r_yaw` becomes pure reward-hack fuel
+        (xy_coarse * yaw_match without contributing to success).
+
+        Tightening `success_threshold = -0.3` requires the gear to descend by
+        `0.3 × shaft_height = 15mm` below target z — partial teeth engagement.
+        This is loose enough that approximate yaw alignment (not perfect) can
+        still let the gear descend, but tight enough that the policy actually
+        needs to learn meshing rather than floating above. Previous setting
+        of -1.0 (full insertion, 50mm) proved too hard — all three runs
+        (baselineA / TacReward 0.1 / TacReward 0.3) plateaued at 0% success
+        after ~12 hours because no yaw_reward + impossible success = no
+        learning signal at all.
+        """
+        # Reuse A_hard ablations (yaw_reward = 0).
+        self._apply_baseline_A_hard()
+        # Tighter success: ~30% shaft depth (15mm below target z), requires
+        # meaningful teeth engagement but not full seating.
+        self.task.success_threshold = -0.3
+        # Fix yaw randomization to match the tactile-reward-model training
+        # distribution. The curriculum dataset was collected with `single_pos`
+        # (gear_table_yaw_range = 0, fixed_asset_init_orn_range_deg = 0), so
+        # the model only saw tactile patterns from a single fixed initial yaw.
+        # Without these zeros, RL would init gear/bolt at 0..360° random yaw
+        # and the reward model would see OOD patterns most of the time, giving
+        # noise instead of usable yaw-learning signal.
+        self.task.gear_table_yaw_range = 0.0
+        self.task.fixed_asset_init_orn_range_deg = 0.0
+        self.task.hand_init_orn_noise = [0.0, 0.0, 0.0]
+
+    def _apply_baseline_A_hard_success_yaw01(self) -> None:
+        """A_hard_success_yaw01: identical to A_hard_success EXCEPT the yaw
+        reward is restored at 10% of the default scale (0.1 vs original 1.0).
+        Designed as a mild guidance variant — gives the baseline a tiny hint
+        about which yaw direction reduces the gear-bolt yaw delta, without
+        making yaw a dominant signal.
+
+        Use case: paper ablation pair
+          - `A_hard_success`(yaw_reward=0): strictest, baseline may stall
+          - `A_hard_success_yaw01`(yaw_reward=0.1): mild hint, baseline can
+            slowly learn yaw, tactile still adds value on top
+        """
+        # Reuse all A_hard_success ablations (yaw=0, success=-0.3, yaw fixed).
+        self._apply_baseline_A_hard_success()
+        # Restore yaw_reward at 10% of default 1.0 → mild but non-zero guidance.
+        self.task.yaw_reward_scale = 0.1
 
     def _apply_baseline_single_pos(self) -> None:
         """Single-position baseline: identical to A in obs/state, but zero out

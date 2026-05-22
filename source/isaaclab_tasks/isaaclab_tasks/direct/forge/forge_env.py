@@ -5,6 +5,7 @@
 import copy
 import os
 import sys
+import time
 
 import numpy as np
 import torch
@@ -259,10 +260,41 @@ class ForgeEnv(FactoryEnv):
         )
         self._tactile_reward_scale = float(
             os.getenv("FORGE_TACTILE_REWARD_SCALE", "1.0"))
+        # EMA smoothing on the per-env tactile progress to filter out single-
+        # frame spikes. Update rule per env step:
+        #   smoothed = alpha * raw + (1 - alpha) * smoothed_prev
+        # alpha=1.0 → no smoothing (use raw output); alpha=0.3 → heavily smoothed.
+        # Smoothed state resets to 0 on episode reset.
+        self._tactile_reward_smooth_alpha = float(
+            os.getenv("FORGE_TACTILE_REWARD_SMOOTH_ALPHA", "1.0"))
+        self._tactile_smoothed_progress = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.float32,
+        )
         self._tactile_reward_enabled = True
+        # Per-episode tactile-progress curve logger for one target env. At each
+        # _compute_tactile_reward call we append the model's raw progress (pre
+        # scale) for env `_tactile_target_env`; at reset of that env we dump a
+        # matplotlib PNG to `_tactile_curve_log_dir` so you can see how the
+        # progress trajectory shapes up across an episode (does the model
+        # actually distinguish good vs. bad trajectories at each phase?).
+        self._tactile_target_env = int(os.getenv("FORGE_TACTILE_REWARD_LOG_ENV", "0"))
+        default_curve_dir = os.path.expanduser(
+            f"~/tactile_isaaclab/logs/tactile_curves/{int(time.time())}"
+        )
+        self._tactile_curve_log_dir = os.getenv("FORGE_TACTILE_REWARD_LOG_DIR",
+                                                default_curve_dir)
+        self._tactile_progress_history: list = []
+        self._tactile_curve_episode_idx = 0
+        try:
+            os.makedirs(self._tactile_curve_log_dir, exist_ok=True)
+            curve_log_msg = f"  curve_log={self._tactile_curve_log_dir}"
+        except Exception:
+            self._tactile_curve_log_dir = None
+            curve_log_msg = "  curve_log=DISABLED"
         print(f"[TactileReward] enabled  ckpt={ckpt}  scale={self._tactile_reward_scale}  "
               f"instruction={instruction!r}  history={self._tactile_history_length}  "
-              f"normalize={self._tactile_normalize_mode}")
+              f"normalize={self._tactile_normalize_mode}  "
+              f"smooth_alpha={self._tactile_reward_smooth_alpha}{curve_log_msg}")
 
     def _compute_tactile_reward(self) -> torch.Tensor:
         """(num_envs,) predicted progress as a dense reward bonus.
@@ -344,7 +376,84 @@ class ForgeEnv(FactoryEnv):
         text = self._tactile_text_emb.expand(self.num_envs, -1)
         with torch.no_grad():
             progress = self._tactile_model(x, text).squeeze(-1)  # (B, T)
-        return progress[:, -1] * self._tactile_reward_scale
+        latest = progress[:, -1]                                 # (B,)
+
+        # EMA smoothing: smoothed = alpha * raw + (1 - alpha) * prev_smoothed.
+        # alpha=1.0 → smoothed equals raw (no-op). alpha<1.0 filters single-
+        # frame spikes; lower = heavier filtering = more lag.
+        alpha = self._tactile_reward_smooth_alpha
+        if alpha < 1.0:
+            self._tactile_smoothed_progress = (
+                alpha * latest + (1.0 - alpha) * self._tactile_smoothed_progress
+            )
+            out = self._tactile_smoothed_progress
+        else:
+            # Keep the buffer in sync so curve logging shows the same value
+            # the policy actually sees, even when alpha=1.0 (no smoothing).
+            self._tactile_smoothed_progress = latest
+            out = latest
+
+        # Append target-env's raw + smoothed progress (pre-scale) to the per-
+        # episode trace. _reset_idx dumps a matplotlib PNG when target env resets.
+        if (self._tactile_curve_log_dir is not None
+                and self._tactile_target_env < self.num_envs):
+            self._tactile_progress_history.append((
+                latest[self._tactile_target_env].item(),
+                out[self._tactile_target_env].item(),
+            ))
+        return out * self._tactile_reward_scale
+
+    def _save_tactile_progress_curve(self) -> None:
+        """Dump the current `_tactile_progress_history` to disk as a PNG.
+        Called from `_reset_idx` when the target env's episode ends.
+        """
+        if (not self._tactile_curve_log_dir
+                or not self._tactile_progress_history):
+            return
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+        except Exception as e:
+            print(f"[TactileReward] matplotlib unavailable, skipping curve dump: {e}")
+            return
+        history = self._tactile_progress_history
+        scale = self._tactile_reward_scale
+        alpha = self._tactile_reward_smooth_alpha
+        # history is a list of (raw, smoothed) tuples.
+        raw_series = [t[0] for t in history]
+        sm_series = [t[1] for t in history]
+        fig, ax = plt.subplots(figsize=(8, 4))
+        steps = list(range(len(history)))
+        ax.plot(steps, raw_series, color="C0", linewidth=1.0, alpha=0.45,
+                label="raw progress")
+        if alpha < 1.0:
+            ax.plot(steps, sm_series, color="C2", linewidth=1.5,
+                    label=f"EMA smoothed (α={alpha})")
+        ax.plot(steps, [v * scale for v in sm_series], color="C1",
+                linewidth=1.2, linestyle="--",
+                label=f"× scale={scale} (rew contribution)")
+        ax.axhline(0.0, color="gray", linewidth=0.5)
+        ax.axhline(1.0, color="gray", linewidth=0.5, linestyle=":")
+        ax.set_xlabel("env step within episode")
+        ax.set_ylabel("tactile progress")
+        ax.set_title(
+            f"env {self._tactile_target_env} | episode {self._tactile_curve_episode_idx} "
+            f"| steps={len(history)}")
+        ax.set_ylim(-0.1, 1.2)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best", fontsize=8)
+        out_path = os.path.join(
+            self._tactile_curve_log_dir,
+            f"env{self._tactile_target_env}_ep{self._tactile_curve_episode_idx:06d}.png",
+        )
+        try:
+            fig.tight_layout()
+            fig.savefig(out_path, dpi=110)
+        except Exception as e:
+            print(f"[TactileReward] failed to save curve PNG: {e}")
+        plt.close(fig)
+        self._tactile_curve_episode_idx += 1
 
     # ----------------------------------------------------------------------
     # Tactile-ReWiND CNN encoder used by Baseline B2 (frozen feature extractor).
@@ -937,8 +1046,19 @@ class ForgeEnv(FactoryEnv):
             self.first_pred_success_tx[thresh][env_ids] = 0
         # Clear tactile reward history + step counter for envs that just reset.
         if getattr(self, "_tactile_reward_enabled", False):
+            # If the target env is in this reset batch, dump its progress
+            # curve to disk before we clear the buffer for it.
+            if (self._tactile_curve_log_dir is not None
+                    and self._tactile_progress_history
+                    and self._tactile_target_env in env_ids.tolist()):
+                self._save_tactile_progress_curve()
+                self._tactile_progress_history = []
             self._tactile_buffer[env_ids] = 0
             self._tactile_step_count[env_ids] = 0
+            # Reset EMA smoothed state so a fresh episode doesn't inherit the
+            # previous episode's tail value (which would bias the early-episode
+            # reward upward).
+            self._tactile_smoothed_progress[env_ids] = 0
 
     def _log_forge_metrics(self, rew_dict, policy_success_pred):
         """Log metrics to evaluate success prediction performance."""

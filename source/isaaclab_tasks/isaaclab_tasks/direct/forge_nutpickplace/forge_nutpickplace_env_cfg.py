@@ -108,6 +108,9 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         if baseline == "A_hard":
             self._apply_baseline_A_hard()
             return
+        if baseline == "A_hard_success":
+            self._apply_baseline_A_hard_success()
+            return
         if baseline == "B":
             self._apply_baseline_B()
             return
@@ -120,6 +123,7 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskNutThreadPickPlaceCfg. "
             f"Implemented: A (frozen), A_hard (A obs + yaw_reward=0 + wider pose noise), "
+            f"A_hard_success (A_hard + success requires one thread pitch deep), "
             f"B (tactile force fields), "
             f"B2 (frozen ReWiND CNN -> 768-dim embedding), "
             f"single_pos (A obs + all reset position randomization zeroed)."
@@ -178,6 +182,46 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         self.task.fixed_asset_init_pos_noise = [0.10, 0.10, 0.03]
         # (hand_init_orn_noise yaw=1.57 rad and fixed_asset_init_orn_range_deg=360
         # are already at their wide defaults; no override needed.)
+
+    def _apply_baseline_A_hard_success(self) -> None:
+        """A_hard_success: A_hard ablations PLUS a much tighter success criterion
+        that requires the nut to be threaded 5 full thread pitches deep onto
+        the bolt — roughly halfway between the original "barely touching" target
+        and the physical bottom (nut sitting on bolt head, ~11 pitches deep).
+
+        Stacks on top of A_hard:
+          - `success_threshold = -5.0`: factory's z check is
+            `z_disp < thread_pitch * success_threshold`. With thread_pitch=2mm
+            and success_threshold=-5.0, the nut must reach target_z - 10mm —
+            i.e. threaded 5 full revolutions of the wrist past the initial
+            engagement point. Original +0.375 allowed "barely touching" (0.75mm
+            above target) to count. This version requires sustained
+            negative-yaw rotation to drive the nut down ~half the bolt shank,
+            which is the phase where tactile patterns (engaged threads vs
+            slipping vs jamming) differ most strongly between success and fail
+            trajectories.
+        """
+        # Reuse all A_hard ablations.
+        self._apply_baseline_A_hard()
+        # Tighter success: nut threaded 2 full thread pitches (~4mm) deep —
+        # policy must sustain ~2 full wrist-yaw revolutions past initial
+        # engagement. Sits between earlier extremes (-3.0 was too hard,
+        # baseline dropped the nut; -1.0 was too easy, tactile hit success
+        # almost trivially). With -2.0:
+        #   - Tactile-aided policy reaches success after threading 2 turns
+        #   - Baseline-only policy can also eventually solve, but needs to
+        #     discover yaw direction from sparse curr_success bonus alone
+        # Combined with the shifted z reward (forge_nutpickplace_env._get_rewards),
+        # the dense `r_descent` / `r_z_descend` peaks at z_disp = -4mm.
+        self.task.success_threshold = -2.0
+        # Remove the "rotate-one-direction-only" hardware constraint. By default
+        # nut_thread sets unidirectional_rot=True, which silently clamps any
+        # commanded positive delta_yaw to 0 — meaning the wrist can only ever
+        # rotate negative. That makes yaw learning trivial (any random action,
+        # post action-space mapping, drifts the wrist toward negative). With
+        # unidirectional_rot=False the policy must actually learn *which
+        # direction* to rotate from the reward signal (or from tactile feedback).
+        self.task.unidirectional_rot = False
 
     def _apply_baseline_single_pos(self) -> None:
         """Single-position baseline: identical to A in obs/state, but zero out
