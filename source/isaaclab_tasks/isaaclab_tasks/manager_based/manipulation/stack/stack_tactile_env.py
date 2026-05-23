@@ -58,17 +58,25 @@ class StackTactileEnv(ManagerBasedRLEnv):
         self._tactile_max_buffer_frames = int(os.environ.get("FORGE_TACTILE_MAX_BUFFER_FRAMES", "500000"))
         self._tactile_episodes_per_env = int(os.environ.get("FORGE_TACTILE_EPISODES_PER_ENV", "0"))  # 0 = unlimited
 
+        self._save_front_cam = self._save_tactile_force_field and ("front_cam" in self.scene.keys())
+
         if self._save_tactile_force_field:
             os.makedirs(self._tactile_save_dir, exist_ok=True)
             if self._save_tactile_all_envs:
                 self._tactile_episode_frames = [[] for _ in range(self.num_envs)]
                 self._tactile_step_in_episode_per_env = [0] * self.num_envs
+                if self._save_front_cam:
+                    self._camera_episode_frames = [[] for _ in range(self.num_envs)]
             else:
                 self._tactile_episode_frames = []
+                if self._save_front_cam:
+                    self._camera_episode_frames = []
             self._tactile_saved_episode_count = 0
             self._tactile_step_in_episode = 0
             self._tactile_saved_per_env = [0] * self.num_envs  # episodes saved per env
             print(f"[StackTactileEnv] Saving tactile force field to: {self._tactile_save_dir}")
+            if self._save_front_cam:
+                print(f"[StackTactileEnv] Saving front camera to: {self._tactile_save_dir}")
     
     def _get_tactile_vector_field(self, sensor_name: str):
         """Return the GelSight force field for a given sensor as (N, H, W, 3)."""
@@ -107,6 +115,23 @@ class StackTactileEnv(ManagerBasedRLEnv):
         }
         np.save(episode_path, payload, allow_pickle=True)
         frames.clear()
+
+        # Flush front camera if enabled and we have frames
+        if self._save_front_cam:
+            cam_frames = (
+                self._camera_episode_frames if env_id is None
+                else self._camera_episode_frames[env_id]
+            )
+            if cam_frames:
+                if env_id is None:
+                    cam_fname = f"ep{self._tactile_saved_episode_count}_camera.npy"
+                else:
+                    cam_fname = f"ep{self._tactile_saved_episode_count}_env{env_id:03d}_camera.npy"
+                cam_path = os.path.join(self._tactile_save_dir, cam_fname)
+                cam_tensor = np.stack(cam_frames, axis=0).astype(np.uint8, copy=False)
+                np.save(cam_path, cam_tensor)
+                cam_frames.clear()
+
         self._tactile_saved_episode_count += 1
         if env_id is not None:
             self._tactile_saved_per_env[env_id] += 1
@@ -142,6 +167,11 @@ class StackTactileEnv(ManagerBasedRLEnv):
             # (H, W, 6)
             combined_field = torch.cat((left_field[target_env_id], right_field[target_env_id]), dim=-1)
             self._tactile_episode_frames.append(combined_field.cpu().numpy())
+
+            # Fetch front camera frame if enabled
+            if self._save_front_cam:
+                cam_data = self.scene["front_cam"].data.output["rgb"][target_env_id, ..., :3]
+                self._camera_episode_frames.append(cam_data.cpu().numpy().astype(np.uint8, copy=False))
         
         self._tactile_step_in_episode += 1
 
@@ -152,6 +182,8 @@ class StackTactileEnv(ManagerBasedRLEnv):
         for env_id in reset_envs:
             if quota > 0 and self._tactile_saved_per_env[env_id] >= quota:
                 self._tactile_episode_frames[env_id].clear()
+                if self._save_front_cam:
+                    self._camera_episode_frames[env_id].clear()
             else:
                 success = int(self.ep_succeeded[env_id].item())
                 self._flush_tactile_episode(success=success, env_id=env_id)
@@ -184,10 +216,18 @@ class StackTactileEnv(ManagerBasedRLEnv):
         if left_field is not None and right_field is not None:
             # (B, H, W, 6)
             combined_fields = torch.cat((left_field, right_field), dim=-1).detach().cpu().numpy()
+            
+            # Fetch all front camera frames at once to avoid env-by-env GPU-CPU transfers.
+            if self._save_front_cam:
+                # Shape: (B, H, W, :3)
+                cam_fields = self.scene["front_cam"].data.output["rgb"][..., :3].detach().cpu().numpy().astype(np.uint8, copy=False)
+            
             for env_id in range(self.num_envs):
                 step = self._tactile_step_in_episode_per_env[env_id]
                 if step % self._tactile_save_interval == 0:
                     self._tactile_episode_frames[env_id].append(combined_fields[env_id].astype(np.float16, copy=False))
+                    if self._save_front_cam:
+                        self._camera_episode_frames[env_id].append(cam_fields[env_id])
                 self._tactile_step_in_episode_per_env[env_id] = step + 1
 
     def step(self, action: torch.Tensor):
@@ -223,8 +263,9 @@ class StackTactileEnv(ManagerBasedRLEnv):
         obs, info = super().reset(seed=seed, env_ids=env_ids, options=options)
         
         # Sim has stepped by now, robot is at initial pose, no contact
-        if self.scene['left_tactile_sensor']._nominal_tactile is None:  # Only on first reset
+        if 'left_tactile_sensor' in self.scene.keys() and self.scene['left_tactile_sensor']._nominal_tactile is None:  # Only on first reset
             self.scene['left_tactile_sensor'].get_initial_render()
+        if 'right_tactile_sensor' in self.scene.keys() and self.scene['right_tactile_sensor']._nominal_tactile is None:
             self.scene['right_tactile_sensor'].get_initial_render()
         
         self.ep_succeeded[env_ids] = False
@@ -242,11 +283,13 @@ class StackTactileEnv(ManagerBasedRLEnv):
     
     def _post_physics_step(self):
         # Force update tactile sensors after each physics step
-        self.scene.left_tactile_sensor.update(
-            dt=self.physics_dt, force_recompute=True
-        )
-        self.scene.right_tactile_sensor.update(
-            dt=self.physics_dt, force_recompute=True
-        )
+        if 'left_tactile_sensor' in self.scene.keys():
+            self.scene['left_tactile_sensor'].update(
+                dt=self.physics_dt, force_recompute=True
+            )
+        if 'right_tactile_sensor' in self.scene.keys():
+            self.scene['right_tactile_sensor'].update(
+                dt=self.physics_dt, force_recompute=True
+            )
         
         super()._post_physics_step()  # or your existing post-physics logic

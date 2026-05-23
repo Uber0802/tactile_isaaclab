@@ -38,6 +38,7 @@ def stack_success(
     xy_threshold: float = 0.04,
     height_threshold: float = 0.005,
     height_diff: float = 0.0468,
+    min_height: float = 0,
     atol: float = 0.0001,
     rtol: float = 0.0001,
 ) -> torch.Tensor:
@@ -56,7 +57,7 @@ def stack_success(
     # Check cube positions
     stacked = xy_dist_c12 < xy_threshold
     stacked = torch.logical_and(h_dist_c12 - height_diff < height_threshold, stacked)
-    stacked = torch.logical_and(pos_diff_c12[:, 2] > 0, stacked)
+    stacked = torch.logical_and(pos_diff_c12[:, 2] > min_height, stacked)
 
     # Check gripper positions
     if hasattr(env.scene, "surface_grippers") and len(env.scene.surface_grippers) > 0:

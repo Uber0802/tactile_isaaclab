@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 import isaaclab.sim as sim_utils
 
-from isaaclab.assets import DeformableObjectCfg
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -32,7 +31,7 @@ from isaaclab_assets.robots.franka import FRANKA_PANDA_CFG # isort: skip
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 LOCAL_ROBOT_USD_PATH = "./franka_gelsight.usd"
-LOCAL_BOWL_USD = "./assets/Props/bowl_sdf.usd"
+LOCAL_LAMP_BULB_USD = "./assets/Props/lamp_bulb_sdf.usd"
 
 
 @configclass
@@ -65,7 +64,6 @@ class GelsightRewardsCfg(RewardsCfg):
         func=mdp.stack_object_z_reward_exp,
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
-            "max_z_distance": 0.072,
         },
         weight=1.0,
     )
@@ -75,8 +73,8 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0374, # 0.0374 + 0.0203 0.0577 0.072
-            "height_tolerance": 0.02,
+            "stack_height_offset": 0.048,
+            "height_tolerance": 0.01,
             "max_xy_distance": 0.16,
             "max_reward": 0.1,
         },
@@ -88,8 +86,8 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0374,
-            "height_tolerance": 0.02,
+            "stack_height_offset": 0.048,
+            "height_tolerance": 0.01,
             "distance_offset": 0.1,
             "decay_rate": 30.0,
         },
@@ -101,8 +99,8 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0374,
-            "height_tolerance": 0.005,
+            "stack_height_offset": 0.048,
+            "height_tolerance": 0.01,
             "penalty_scale": 5.0,
         },
         weight=-1.0,
@@ -114,7 +112,10 @@ class GelsightRewardsCfg(RewardsCfg):
             "robot_cfg": SceneEntityCfg("robot"),
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "height_diff": 0.0374,
+            "height_diff": 0.048,
+            "xy_threshold": 0.04,
+            "height_threshold": 0.004,
+            "min_height": 0.0468
         },
         weight=10.0,
     )
@@ -128,7 +129,7 @@ class EventCfg:
         func=franka_stack_events.set_default_joint_pose,
         mode="reset",
         params={
-            "default_pose": [0.0444, -0.1894, -0.1107, -2.5148, 0.0044, 2.3775, 0.6952, 0.01500, 0.01500],
+            "default_pose": [0.0444, -0.1894, -0.1107, -2.5148, 0.0044, 2.3775, 0.6952, 0.0400, 0.0400],
         },
     )
 
@@ -154,19 +155,19 @@ class EventCfg:
 
 
 @configclass
-class FrankaStackBowlEnvCfg(StackEnvCfg):
+class FrankaStackLampBulbEnvCfg(StackEnvCfg):
     """Configuration for the Franka Gelsight Environment."""
 
     # Override the observations and rewards
     observations: GelsightObservationsCfg = GelsightObservationsCfg()
     rewards: GelsightRewardsCfg = GelsightRewardsCfg()
-
+    '''
     left_tactile_sensor: VisuoTactileSensorCfg = VisuoTactileSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_link/tactile_sensor",
         update_period=1 / 15,
         render_cfg=GELSIGHT_R15_CFG,
-        enable_camera_tactile=True,
-        enable_force_field=True,
+        enable_camera_tactile=False,
+        enable_force_field=False,
         tactile_array_size=(20, 25),
         tactile_margin=0.003,
         contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
@@ -186,8 +187,8 @@ class FrankaStackBowlEnvCfg(StackEnvCfg):
         prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_link/tactile_sensor",
         update_period=1 / 15,
         render_cfg=GELSIGHT_R15_CFG,
-        enable_camera_tactile=True,
-        enable_force_field=True,
+        enable_camera_tactile=False,
+        enable_force_field=False,
         tactile_array_size=(20, 25),
         tactile_margin=0.003,
         contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
@@ -202,7 +203,7 @@ class FrankaStackBowlEnvCfg(StackEnvCfg):
             data_types=["distance_to_image_plane"],
             spawn=None,
         ),
-    )
+    )'''
 
     def __post_init__(self):
         # post init of parent
@@ -237,10 +238,11 @@ class FrankaStackBowlEnvCfg(StackEnvCfg):
 
         # Add semantics to ground
         self.scene.plane.semantic_tags = [("class", "ground")]
-
-        # Add tactile sensors to the scene
-        self.scene.left_tactile_sensor = self.left_tactile_sensor
-        self.scene.right_tactile_sensor = self.right_tactile_sensor
+        
+        if hasattr(self, "left_tactile_sensor") and hasattr(self, "right_tactile_sensor"):
+            # Add tactile sensors to the scene
+            self.scene.left_tactile_sensor = self.left_tactile_sensor
+            self.scene.right_tactile_sensor = self.right_tactile_sensor
 
         # Set actions for the specific robot type (franka)
         self.actions.arm_action = mdp.JointPositionActionCfg(
@@ -250,12 +252,12 @@ class FrankaStackBowlEnvCfg(StackEnvCfg):
         self.actions.gripper_action = mdp.BinaryJointPositionActionCfg(
             asset_name="robot",
             joint_names=["panda_finger.*"],
-            open_command_expr={"panda_finger_.*": 0.015},
+            open_command_expr={"panda_finger_.*": 0.04},
             close_command_expr={"panda_finger_.*": 0.0},
         )
         # utilities for gripper status check
         self.gripper_joint_names = ["panda_finger_.*"]
-        self.gripper_open_val = 0.015
+        self.gripper_open_val = 0.04
         self.gripper_threshold = 0.005
 
         # Rigid body properties of each cube
@@ -271,9 +273,9 @@ class FrankaStackBowlEnvCfg(StackEnvCfg):
         # Set each stacking cube deterministically
         self.scene.stack_object = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/stack_object",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.5, 0, 0.0107), rot=(1, 0, 0, 0)),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.6, 0.02, 0.035), rot=(1, 0, 0, 0)),
             spawn=sim_utils.UsdFileCfg(
-                usd_path=LOCAL_BOWL_USD,
+                usd_path=LOCAL_LAMP_BULB_USD,
                 rigid_props=cube_properties,
             ),
         )

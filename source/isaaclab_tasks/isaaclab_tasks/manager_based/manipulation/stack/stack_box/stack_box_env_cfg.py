@@ -1,7 +1,4 @@
-# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
-# All rights reserved.
-#
-# SPDX-License-Identifier: BSD-3-Clause
+import os
 import isaaclab.sim as sim_utils
 
 
@@ -10,7 +7,7 @@ from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.sensors import FrameTransformerCfg, TiledCameraCfg
+from isaaclab.sensors import CameraCfg, FrameTransformerCfg, TiledCameraCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import OffsetCfg
 from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
@@ -104,6 +101,9 @@ class FrankaStackBoxEnvCfg(StackEnvCfg):
     # Override the observations and rewards
     observations: GelsightObservationsCfg = GelsightObservationsCfg()
     rewards: GelsightRewardsCfg = GelsightRewardsCfg()
+
+    enable_front_cam: bool = os.environ.get("FORGE_ENABLE_FRONT_CAM", "0") == "1"
+    """Whether to enable the front-facing camera in the scene and observations."""
 
     left_tactile_sensor: VisuoTactileSensorCfg = VisuoTactileSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_link/tactile_sensor",
@@ -266,3 +266,19 @@ class FrankaStackBoxEnvCfg(StackEnvCfg):
                 ),
             ],
         )
+
+        if self.enable_front_cam:
+            # Add front camera to see the boxes and front of robot
+            self.scene.front_cam = CameraCfg(
+                prim_path="{ENV_REGEX_NS}/front_cam",
+                update_period=0.0,
+                height=224,
+                width=224,
+                data_types=["rgb", "distance_to_image_plane"],
+                spawn=sim_utils.PinholeCameraCfg(
+                    focal_length=24.0, focus_distance=400.0, horizontal_aperture=20.955, clipping_range=(0.1, 2.0)
+                ),
+                offset=CameraCfg.OffsetCfg(
+                    pos=(1.0, 0.0, 0.4), rot=(0.35355, -0.61237, -0.61237, 0.35355), convention="ros"
+                ),
+            )
