@@ -112,7 +112,7 @@ def _maybe_visualize_ee_pos(env: ManagerBasedRLEnv, ee_positions: torch.Tensor):
 def rewind_tactile_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Query the environment's online ReWiND tactile reward if available."""
 
-    if hasattr(env, "compute_rewind_tactile_reward"):
+    if hasattr(env, "compute_tactile_reward"):
         return env.compute_rewind_tactile_reward()
     return torch.zeros(env.num_envs, device=env.device)
 
@@ -176,7 +176,7 @@ def stack_object_precision_xy_reward(
     target_pos[:, 2] += stack_height_offset
     delta = _get_pos(stack_object) - target_pos
 
-    # _maybe_visualize_stack_target(env, _get_pos(stack_object), 0.5, marker_name="cube_1", color=(0.0, 0.35, 1.0))
+    _maybe_visualize_stack_target(env, _get_pos(stack_object), 0.5, marker_name="cube_1", color=(0.0, 0.35, 1.0))
 
     z_aligned = torch.abs(delta[:, 2]) < height_tolerance
     xy_distance = torch.linalg.vector_norm(delta[:, :2], dim=1)

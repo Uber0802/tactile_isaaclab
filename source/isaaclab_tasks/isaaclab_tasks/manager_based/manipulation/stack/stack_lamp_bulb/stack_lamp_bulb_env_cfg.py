@@ -147,7 +147,7 @@ class EventCfg:
         func=franka_stack_events.randomize_object_pose,
         mode="reset",
         params={
-            "pose_range": {"x": (0.4, 0.6), "y": (-0.10, 0.10), "yaw": (-1.0, 1, 0)},
+            "pose_range": {"x": (0.4, 0.6), "y": (-0.10, 0.10), "yaw": (-1.0, 1.0)},
             "min_separation": 0.1,
             "asset_cfgs": [SceneEntityCfg("stack_object"), SceneEntityCfg("target_cube")],
         },
@@ -277,6 +277,8 @@ class FrankaStackLampBulbEnvCfg(StackEnvCfg):
             spawn=sim_utils.UsdFileCfg(
                 usd_path=LOCAL_LAMP_BULB_USD,
                 rigid_props=cube_properties,
+                articulation_props=sim_utils.ArticulationRootPropertiesCfg(articulation_enabled=False),
+                semantic_tags=[("class", "stack_object")],
             ),
         )
 
