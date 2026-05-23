@@ -113,7 +113,7 @@ def rewind_tactile_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     """Query the environment's online ReWiND tactile reward if available."""
 
     if hasattr(env, "compute_tactile_reward"):
-        return env.compute_rewind_tactile_reward()
+        return env.compute_tactile_reward()
     return torch.zeros(env.num_envs, device=env.device)
 
 

@@ -58,7 +58,7 @@ class GelsightObservationsCfg(ObservationsCfg):
 class GelsightRewardsCfg(RewardsCfg):
     """Reward specifications for the Gelsight environment."""
 
-    rewind_tactile_reward = RewTerm(func=mdp.rewind_tactile_reward, weight=0.2)
+    rewind_tactile_reward = RewTerm(func=mdp.rewind_tactile_reward, weight=1)
 
 
 @configclass

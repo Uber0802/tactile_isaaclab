@@ -8,6 +8,7 @@ FORGE_TACTILE_REWARD_INSTRUCTION="grasp a bowl and stack it on a box" \
     --max_iterations 10000 \
     --enable_cameras \
     --track \
+    --headless \
     --wandb-entity b06902045-national-taiwan-university \
     --wandb-project-name tactile-rewind \
     --wandb-name Stack_bowl_baselineA
