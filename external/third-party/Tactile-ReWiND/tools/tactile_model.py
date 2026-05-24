@@ -107,6 +107,7 @@ class TactileReWiNDTransformer(nn.Module):
         dropout: float = 0.1,
         num_strided_layers: int = 5,
         bimanual_axis: str = "width",
+        in_channels: int = 2,
     ):
         super().__init__()
         self.max_length = max_length
@@ -114,9 +115,10 @@ class TactileReWiNDTransformer(nn.Module):
         self.video_dim = 2 * per_hand_dim
         self.num_strided_layers = num_strided_layers
         self.bimanual_axis = bimanual_axis
+        self.in_channels = in_channels
 
         self.encoder = TactileCNNEncoder(
-            in_channels=2,
+            in_channels=in_channels,
             per_hand_dim=per_hand_dim,
             output_dim=self.video_dim,
             num_strided_layers=num_strided_layers,

@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 import isaaclab.sim as sim_utils
-
+import math
 from isaaclab.assets import RigidObjectCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -78,7 +78,7 @@ class GelsightRewardsCfg(RewardsCfg):
             "max_xy_distance": 0.16,
             "max_reward": 0.1,
         },
-        weight=1.0,
+        weight=0,
     )
 
     stack_object_xy_precision_exp = RewTerm(
@@ -115,7 +115,6 @@ class GelsightRewardsCfg(RewardsCfg):
             "height_diff": 0.048,
             "xy_threshold": 0.04,
             "height_threshold": 0.004,
-            "min_height": 0.0468
         },
         weight=10.0,
     )
@@ -147,7 +146,7 @@ class EventCfg:
         func=franka_stack_events.randomize_object_pose,
         mode="reset",
         params={
-            "pose_range": {"x": (0.4, 0.6), "y": (-0.10, 0.10), "yaw": (-1.0, 1.0)},
+            "pose_range": {"x": (0.4, 0.6), "y": (-0.10, 0.10), "yaw": (-math.pi, math.pi)},
             "min_separation": 0.1,
             "asset_cfgs": [SceneEntityCfg("stack_object"), SceneEntityCfg("target_cube")],
         },
@@ -246,7 +245,7 @@ class FrankaStackLampBulbEnvCfg(StackEnvCfg):
 
         # Set actions for the specific robot type (franka)
         self.actions.arm_action = mdp.JointPositionActionCfg(
-            asset_name="robot", joint_names=["panda_joint[1-7]"], scale=0.5, use_default_offset=True
+            asset_name="robot", joint_names=["panda_joint[1-7]"], scale=1, use_default_offset=True
         )
         # self.actions.gripper_action = mdp.AbsBinaryJointPositionActionCfg(
         self.actions.gripper_action = mdp.BinaryJointPositionActionCfg(

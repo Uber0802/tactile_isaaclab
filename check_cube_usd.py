@@ -12,7 +12,7 @@ simulation_app = launcher.app
 import isaaclab.utils.math as math_utils
 from isaaclab.assets import Articulation, RigidObject
 import isaaclab_tasks  # noqa: F401
-from isaaclab_tasks.manager_based.manipulation.stack.config.franka.stack_gelsight_env_cfg import FrankaGelsightEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.stack_box.stack_box_env_cfg import FrankaStackBoxEnvCfg
 from isaaclab_contrib.sensors.tacsl_sensor.visuotactile_render import compute_tactile_shear_image
 
 # --- IK and Teleop imports ---
@@ -66,6 +66,21 @@ def run_manual_test(env):
     left_sensor = env.unwrapped.scene["left_tactile_sensor"]
     right_sensor = env.unwrapped.scene["right_tactile_sensor"]
 
+    # Setup video writer
+    video_writer = None
+    if "rgb_camera" in obs and "front_cam" in obs["rgb_camera"]:
+        video_dir = "/home/kim/ml/tactile-irl/tactile_isaaclab/outputs"
+        os.makedirs(video_dir, exist_ok=True)
+        video_path = os.path.join(video_dir, "front_camera_recording.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        video_writer = cv2.VideoWriter(video_path, fourcc, 20.0, (224, 224))
+        
+        frame_tensor = obs["rgb_camera"]["front_cam"][0]
+        frame_np = frame_tensor.cpu().numpy().astype(np.uint8)
+        frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+        video_writer.write(frame_bgr)
+        print(f"Recording video to: {video_path}")
+
     while simulation_app.is_running():
         # Check if capture requested
 
@@ -73,7 +88,7 @@ def run_manual_test(env):
         actions = torch.zeros(env.unwrapped.num_envs, env.unwrapped.action_manager.total_action_dim, device=env.unwrapped.device)
 
         # Get box and gripper positions directly from the physics scene state
-        box_pos = env.unwrapped.scene["cube_1"].data.root_pos_w[:, 0:3] - env.unwrapped.scene.env_origins
+        box_pos = env.unwrapped.scene["stack_object"].data.root_pos_w[:, 0:3] - env.unwrapped.scene.env_origins
         gripper_pos = env.unwrapped.scene["ee_frame"].data.target_pos_w[:, 0, 0:3] - env.unwrapped.scene.env_origins
 
         # 2. Simple State Machine Logic
@@ -107,12 +122,31 @@ def run_manual_test(env):
         # 3. Step the environment
         obs, rew, terminated, truncated, info = env.step(actions)
 
-        # 4. Print individual reward terms
+        # 4. Save video frame
+        if video_writer is not None and "rgb_camera" in obs and "front_cam" in obs["rgb_camera"]:
+            frame_tensor = obs["rgb_camera"]["front_cam"][0]
+            frame_np = frame_tensor.cpu().numpy().astype(np.uint8)
+            frame_bgr = cv2.cvtColor(frame_np, cv2.COLOR_RGB2BGR)
+            video_writer.write(frame_bgr)
+
+        # 5. Print individual reward terms
         global_step += 1
         if global_step % 50 == 0:
             print(f"\n--- Step {global_step}")
             save_gelsight_full_visualization(left_sensor.data, f"gelsight_left_capture{global_step}")
             save_gelsight_full_visualization(right_sensor.data, f"gelsight_right_capture{global_step}")
+            
+        if global_step >= 300:
+            print("Step limit reached (300 steps). Exiting loop.")
+            break
+
+        if terminated.any() or truncated.any():
+            print("Environment terminated or truncated. Exiting loop.")
+            break
+
+    if video_writer is not None:
+        video_writer.release()
+        print(f"Video saved successfully to: {video_path}")
             
         '''
         if global_step % 50 == 0:
@@ -126,7 +160,7 @@ def run_manual_test(env):
             print(f"  Total Step Reward: {rew[0].item():.4f}")
         '''
 def main():
-    env_cfg = FrankaGelsightEnvCfg()
+    env_cfg = FrankaStackBoxEnvCfg()
     env_cfg.scene.num_envs = 1
     env_cfg.episode_length_s = 1000.0 # Extend episode length to 1000 seconds for manual debugging
     

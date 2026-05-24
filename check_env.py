@@ -15,6 +15,7 @@ import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.manager_based.manipulation.stack.stack_box.stack_box_env_cfg import FrankaStackBoxEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_peg.stack_peg_env_cfg import FrankaStackPegEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_lamp_bulb.stack_lamp_bulb_env_cfg import FrankaStackLampBulbEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.stack_lighter.stack_lighter_env_cfg import FrankaStackLighterEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_banana.stack_banana_env_cfg import FrankaStackBananaEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_bowl.stack_bowl_env_cfg import FrankaStackBowlEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_mug.stack_mug_env_cfg import FrankaStackMugEnvCfg
@@ -49,6 +50,7 @@ def save_gelsight_full_visualization(sensor_data, filename_prefix, title_prefix=
         print(f"Saved: {filename_prefix}_force_field.png")
     else:
         tactile_ff_img = None
+        print(f"[Warning] Cannot save visualization for {title_prefix} sensor: tactile_normal_force or tactile_shear_force is None. Ensure 'enable_force_field=True' and that the robot elastomer makes contact.")
 
 
 def run_manual_test(env, gripper_fixed_position=0.015, pos_sensitivity=0.05, rot_sensitivity=0.15):
@@ -105,7 +107,7 @@ def run_manual_test(env, gripper_fixed_position=0.015, pos_sensitivity=0.05, rot
     print("\n---------------------------------------------------------")
     print("Starting Manual Test...")
     print("Press 'T' to toggle Auto (State Machine) vs Manual Mode.")
-    print("Press 'P' to take a force picture.")
+    print("Press 'K' to take a force picture.")
     print("---------------------------------------------------------")
     print(teleop_interface)
 
@@ -194,7 +196,7 @@ def run_manual_test(env, gripper_fixed_position=0.015, pos_sensitivity=0.05, rot
 
 def main():
     import sys
-    gripper_fixed_position = 0.015
+    gripper_fixed_position = 0.04
     if "--gripper_pos" in sys.argv:
         idx = sys.argv.index("--gripper_pos")
         if idx + 1 < len(sys.argv):
@@ -217,10 +219,18 @@ def main():
     print(f"  pos_sensitivity: {pos_sensitivity}")
     print(f"  rot_sensitivity: {rot_sensitivity}")
     
-    env_cfg = FrankaStackBowlEnvCfg()
+    env_cfg = FrankaStackLighterEnvCfg()
     env_cfg.scene.num_envs = 1
     env_cfg.episode_length_s = 1000.0 # Extend episode length to 1000 seconds for manual debugging
     
+    # Enable force fields for tactile sensors to calculate forces and render
+    if hasattr(env_cfg, "left_tactile_sensor"):
+        env_cfg.left_tactile_sensor.enable_force_field = True
+    if hasattr(env_cfg, "right_tactile_sensor"):
+        env_cfg.right_tactile_sensor.enable_force_field = True
+
+    # Enable external forces iteration flag to resolve compliant contact force field accurately
+    env_cfg.sim.physx.enable_external_forces_every_iteration = True
     # Instead of completely overwriting the robot config (which breaks the custom USD path for sensors),
     # we update the PD gains to be stiffer for better IK tracking.
     env_cfg.scene.robot.spawn.rigid_props.disable_gravity = True
@@ -247,7 +257,7 @@ def main():
         use_default_offset=False,
     )
     
-    env = gym.make("Isaac-Stack-Bowl-Franka-Gelsight-v0", cfg=env_cfg)
+    env = gym.make("Isaac-Stack-Lighter-Franka-Gelsight-v0", cfg=env_cfg)
     
     run_manual_test(
         env,

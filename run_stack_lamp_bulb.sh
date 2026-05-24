@@ -4,7 +4,7 @@ FORGE_TACTILE_REWARD_SCALE=1.0 \
 FORGE_TACTILE_REWARD_INSTRUCTION="grasp the lamp bulb and stack it on the box" \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Stack-Lamp-Bulb-Franka-Gelsight-v0 \
-    --num_envs 1024 \
+    --num_envs 256 \
     --max_iterations 10000 \
     --enable_cameras \
     --track \
