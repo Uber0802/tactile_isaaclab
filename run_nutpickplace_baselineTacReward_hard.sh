@@ -14,8 +14,9 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-FORGE_TACTILE_REWARD_CKPT=/mnt/lab-tank/uber/Tactile-Reward/exp_taskcompare/nut_scratch/nut_scratch_epoch12.pth \
+FORGE_TACTILE_REWARD_CKPT=/mnt/tank/uber/Tactile-Reward/exp_taskcompare/nut_scratch/nut_scratch_epoch12.pth \
 FORGE_TACTILE_REWARD_SCALE=0.3 \
+FORGE_TACTILE_REWARD_SMOOTH_ALPHA=0.2 \
 FORGE_TACTILE_REWARD_INSTRUCTION="pick up the nut and thread it onto the bolt" \
 FORGE_TACTILE_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-party/Tactile-ReWiND \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
@@ -28,6 +29,6 @@ FORGE_TACTILE_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-part
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name NutThread_PickPlace_baselineTacReward_hard_success_0.3_-1 \
-    agent.params.config.full_experiment_name=NutThread_PickPlace_baselineTacReward_hard_success_0.3_-1 \
+    --wandb-name NutThread_PickPlace_baselineTacReward_hard_success_0.3_-2 \
+    agent.params.config.full_experiment_name=NutThread_PickPlace_baselineTacReward_hard_success_0.3_-2 \
     agent.params.config.save_frequency=20

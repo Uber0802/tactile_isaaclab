@@ -379,6 +379,12 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         xy_coarse = torch.exp(-gear_to_target_xy / self.cfg_task.xy_coarse_scale)
         r_xy_align = r_lift * xy_coarse
 
+        # (5b) Sharp XY alignment — same shape as r_xy_align but with a 1 cm scale
+        # so it only fires in the final approach above the bolt. Bridges between
+        # the 5 cm coarse signal and the 5 mm fine signal inside r_descent.
+        xy_sharp = torch.exp(-gear_to_target_xy / self.cfg_task.xy_align_sharp_scale)
+        r_xy_align_sharp = r_lift * xy_sharp
+
         # (6) Coarse Z descent — bridges the gap between r_xy_align (no z signal)
         # and r_descent (5 mm fine, both saturated during transport). Fires once
         # gear is roughly XY-aligned over the bolt at 2–10 cm height.
@@ -400,6 +406,7 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
             + self.cfg_task.lift_reward_scale * r_lift
             + r_gear_speed_penalty
             + self.cfg_task.xy_align_reward_scale * r_xy_align
+            + self.cfg_task.xy_align_sharp_reward_scale * r_xy_align_sharp
             + self.cfg_task.z_align_reward_scale * r_z_descend
             + self.cfg_task.descent_reward_scale * r_descent
             + self.cfg_task.yaw_reward_scale * r_yaw
@@ -430,6 +437,8 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         self.extras["logs_yaw_diff_abs"] = torch.abs(yaw_diff).mean()
         self.extras["logs_rew_yaw"] = r_yaw.mean()
         self.extras["logs_rew_xy_align"] = r_xy_align.mean()
+        self.extras["logs_rew_xy_align_sharp"] = r_xy_align_sharp.mean()
+        self.extras["logs_xy_sharp_mean"] = xy_sharp.mean()
         self.extras["logs_rew_z_descend"] = r_z_descend.mean()
         self.extras["logs_gripper_action_cmd"] = gripper_action_cmd.mean()
         self.extras["logs_gripper_width"] = gripper_joint_width.mean()
@@ -457,6 +466,7 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
                 f"distToSuccZ(mean/min)={dist_to_success_z.mean().item():.4f}/{dist_to_success_z.min().item():.4f} "
                 f"yaw_diff_abs(mean)={torch.abs(yaw_diff).mean().item():.3f} "
                 f"r_xy_align={r_xy_align.mean().item():.3f} "
+                f"r_xy_align_sharp={r_xy_align_sharp.mean().item():.3f} "
                 f"r_z_descend={r_z_descend.mean().item():.3f} "
                 f"r_descent={r_descent.mean().item():.3f} "
                 f"yaw_rew={r_yaw.mean().item():.3f} "

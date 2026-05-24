@@ -506,13 +506,13 @@ class FactoryEnv(DirectRLEnv):
             "curr_success": curr_successes.float(),
         }
         rew_scales = {
-            "kp_baseline": 1.0,
-            "kp_coarse": 1.0,
-            "kp_fine": 1.0,
+            "kp_baseline": 0.1,
+            "kp_coarse": 0.1,
+            "kp_fine": 0.1,
             "action_penalty_ee": -self.cfg_task.action_penalty_ee_scale,
             "action_grad_penalty": -self.cfg_task.action_grad_penalty_scale,
             "curr_engaged": 1.0,
-            "curr_success": 1.0,
+            "curr_success": 5.0,
         }
         return rew_dict, rew_scales
 
