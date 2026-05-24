@@ -46,12 +46,14 @@ class ForgeGearMeshPickPlace(ForgeGearMesh):
     # Aim fingertip at the gear mid-section (gear bottom + ~5 mm) so closing the
     # gripper actually pinches the gear sides instead of slamming the top and
     # ejecting it. Held low so approach can't dominate lift.
-    approach_reward_scale: float = 0.3
+    # Dense scales /10 (2026-05-23) so sparse curr_success (×5 in factory_env)
+    # dominates the gradient near the goal.
+    approach_reward_scale: float = 0.1
     approach_scale: float = 0.05
     gear_grasp_z_offset: float = 0.005
 
     # Lift reward: encourages raising the gear above its initial table height.
-    lift_reward_scale: float = 2.0
+    lift_reward_scale: float = 0.4
     lift_scale: float = 0.01
     # Softer proximity gate (was /0.05). The previous gate collapsed to ~0 the
     # instant the gear was nudged away, killing the gradient before the policy
@@ -71,7 +73,7 @@ class ForgeGearMeshPickPlace(ForgeGearMesh):
     # (`get_target_held_base_pose`, i.e., medium-peg position with the gear-base
     # offset already applied). Continuous exp gates so the policy keeps gradient
     # all the way down to the 2.5 mm / 1 mm success tolerances.
-    descent_reward_scale: float = 1.5
+    descent_reward_scale: float = 0.3
     descent_z_scale: float = 0.005
     # Continuous fine XY gate — exp(-d/scale): d=2.5 mm → 0.61, d=5 mm → 0.37.
     xy_alignment_scale: float = 0.005
@@ -82,8 +84,15 @@ class ForgeGearMeshPickPlace(ForgeGearMesh):
     # Without this, after grasp+lift the policy has no signal pulling the gear
     # horizontally toward the bolt, and `r_descent` only fires once both xy and
     # z are already inside ~5 mm.
-    xy_align_reward_scale: float = 1.0
+    xy_align_reward_scale: float = 0.3
     xy_coarse_scale: float = 0.05  # exp(-d/0.05): d=5 cm → 0.37, d=10 cm → 0.14
+
+    # Sharp version of r_xy_align — bridges the coarse 5 cm scale and the fine
+    # 5 mm scale (used by r_descent). Gives a stronger gradient pulling the gear
+    # right over the post in the last ~1–2 cm before fine descent kicks in.
+    # Gated on r_lift just like the coarse term.
+    xy_align_sharp_reward_scale: float = 0.3
+    xy_align_sharp_scale: float = 0.01  # exp(-d/0.01): d=1 cm → 0.37, d=2 cm → 0.14
 
     # Once XY is roughly aligned, reward driving Z down. Gated on the coarse
     # `xy_coarse` alignment so the policy doesn't get z-descent reward while
@@ -91,7 +100,7 @@ class ForgeGearMeshPickPlace(ForgeGearMesh):
     # by leaving the gear on the table.
     # `r_descent` (fine 5 mm × 5 mm) handles the final 1–2 cm; this term keeps
     # gradient alive in the 2–10 cm height-above-target range.
-    z_align_reward_scale: float = 1.0
+    z_align_reward_scale: float = 0.3
     z_coarse_scale: float = 0.05  # exp(-z/0.05): z=5 cm → 0.37, z=10 cm → 0.14
 
     # Yaw alignment reward — gear_yaw must match fixed_yaw within ~6° for success

@@ -350,13 +350,30 @@ class ForgeNutThreadPickPlaceEnv(ForgeEnv):
         # (4) Continuous XY + Z gates — exp(-d/scale) instead of hard thresholds so the
         # policy keeps getting gradient as it tightens past the success tolerances
         # (xy < 2.5 mm, z_disp < 0.75 mm).
-        # Bug fix: previously used clamp(z, min=0) which gave full z_progress
-        # whenever nut was at or below target — letting the policy farm the z
-        # reward by parking a slightly-lifted nut over the bolt without
-        # actually threading. Use |z_above_target| so deviations in either
-        # direction lose reward.
+        #
+        # z_dist is centered on the "ideal" z_disp = the threshold at which success
+        # turns True (thread_pitch * success_threshold). Two regimes:
+        #   - success_threshold ≥ 0 (original A): ideal ≈ target z. Use abs() so
+        #     deviations in either direction lose reward — prevents the farming
+        #     bug where policy parks a slightly-lifted nut over the bolt without
+        #     actually threading.
+        #   - success_threshold < 0 (A_hard_success, e.g. -2.0 → 2 turns deep):
+        #     ideal is BELOW target z. Use one-sided clamp so going past ideal
+        #     (deeper, toward bolt head) keeps full reward — fixes the
+        #     "park at z_disp = 0 = local-max trap" that otherwise blocks deep
+        #     threading because both r_descent and r_z_descend would decrease as
+        #     the nut moves past target.
         xy_aligned = torch.exp(-nut_to_target_xy / self.cfg_task.xy_alignment_scale)
-        z_dist = torch.abs(nut_above_target_z)
+        ideal_z_disp = (self.cfg_task.fixed_asset_cfg.thread_pitch
+                        * self.cfg_task.success_threshold)
+        if ideal_z_disp >= 0:
+            z_dist = torch.abs(nut_above_target_z)
+        else:
+            z_dist = torch.clamp(nut_above_target_z - ideal_z_disp, min=0.0)
+        # `dist_to_success_z` = how much shallower than the success boundary the
+        # nut is right now. 0 means at-or-past success in z; positive means must
+        # still descend that much further.
+        dist_to_success_z = torch.clamp(nut_above_target_z - ideal_z_disp, min=0.0)
         z_progress = torch.exp(-z_dist / self.cfg_task.descent_z_scale)
         r_descent = xy_aligned * z_progress
 
@@ -430,6 +447,8 @@ class ForgeNutThreadPickPlaceEnv(ForgeEnv):
         self.extras["logs_nut_to_target_xy_min"] = nut_to_target_xy.min()
         self.extras["logs_nut_above_target_z"] = nut_above_target_z.mean()
         self.extras["logs_nut_above_target_z_min"] = nut_above_target_z.min()
+        self.extras["logs_dist_to_success_z"] = dist_to_success_z.mean()
+        self.extras["logs_dist_to_success_z_min"] = dist_to_success_z.min()
         self.extras["logs_gripper_action_cmd"] = gripper_action_cmd.mean()
         self.extras["logs_gripper_width"] = gripper_joint_width.mean()
         self.extras["logs_gripper_open_frac"] = gripper_open_frac.mean()
@@ -452,6 +471,7 @@ class ForgeNutThreadPickPlaceEnv(ForgeEnv):
                 f"nutV(mean/max)={nut_speed.mean().item():.2f}/{nut_speed.max().item():.2f} "
                 f"nut2tgt_xy(min/mean)={nut_to_target_xy.min().item():.4f}/{nut_to_target_xy.mean().item():.4f} "
                 f"nut_z_above_tgt(min/mean)={nut_above_target_z.min().item():+.4f}/{nut_above_target_z.mean().item():+.4f} "
+                f"distToSuccZ(mean/min)={dist_to_success_z.mean().item():.4f}/{dist_to_success_z.min().item():.4f} "
                 f"descent={r_descent.mean().item():.3f} "
                 f"xyAlignReward={r_xy_align.mean().item():.3f} "
                 f"xyCoarse(mean)={xy_coarse.mean().item():.3f} "

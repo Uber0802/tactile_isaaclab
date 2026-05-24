@@ -25,7 +25,7 @@ FORGE_TACTILE_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-part
     --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
     --baseline A_legacy \
     --headless \
-    --num_envs 256 \
+    --num_envs 128 \
     --max_iterations 10000 \
     --enable_cameras \
     --track \
