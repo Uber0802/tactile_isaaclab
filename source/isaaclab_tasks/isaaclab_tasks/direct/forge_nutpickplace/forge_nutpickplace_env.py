@@ -84,7 +84,9 @@ class ForgeNutThreadPickPlaceEnv(ForgeEnv):
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
-        if hasattr(self.cfg, "left_tactile_sensor"):
+        # Respect FORGE_SKIP_TACTILE_SENSORS — cfg fields are set to None in
+        # ForgeEnvCfg.__post_init__ when the speed escape hatch is on.
+        if getattr(self.cfg, "left_tactile_sensor", None) is not None:
             left_tactile_cfg = copy.deepcopy(self.cfg.left_tactile_sensor)
             left_tactile_cfg.prim_path = left_tactile_cfg.prim_path.format(ENV_REGEX_NS=self.scene.env_regex_ns)
             left_tactile_cfg.camera_cfg.prim_path = left_tactile_cfg.camera_cfg.prim_path.format(
@@ -96,7 +98,7 @@ class ForgeNutThreadPickPlaceEnv(ForgeEnv):
             self._left_tactile_sensor = VisuoTactileSensor(left_tactile_cfg)
             self.scene.sensors["left_tactile_sensor"] = self._left_tactile_sensor
 
-        if hasattr(self.cfg, "right_tactile_sensor"):
+        if getattr(self.cfg, "right_tactile_sensor", None) is not None:
             right_tactile_cfg = copy.deepcopy(self.cfg.right_tactile_sensor)
             right_tactile_cfg.prim_path = right_tactile_cfg.prim_path.format(ENV_REGEX_NS=self.scene.env_regex_ns)
             right_tactile_cfg.camera_cfg.prim_path = right_tactile_cfg.camera_cfg.prim_path.format(
@@ -222,10 +224,11 @@ class ForgeNutThreadPickPlaceEnv(ForgeEnv):
         """
         obs_dict, state_dict = self._get_factory_obs_state_dict()
 
+        # Trajectory save (tactile and/or camera) runs once per step.
+        self._save_env0_tactile_force_field()
         if "left_tactile_sensor" in self.scene.sensors:
             left_normal_force, left_shear_force = self._get_tactile_force_tensors("left_tactile_sensor")
             right_normal_force, right_shear_force = self._get_tactile_force_tensors("right_tactile_sensor")
-            self._save_env0_tactile_force_field()
             # Populate the same 4 tactile entries into both dicts. Whether they
             # actually feed into the actor / critic is decided by `obs_order` /
             # `state_order` (see `apply_baseline` in env_cfg). Baseline A does
