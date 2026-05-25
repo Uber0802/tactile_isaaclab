@@ -203,17 +203,18 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         """
         # Reuse all A_hard ablations.
         self._apply_baseline_A_hard()
-        # Tighter success: nut threaded 2 full thread pitches (~4mm) deep —
-        # policy must sustain ~2 full wrist-yaw revolutions past initial
-        # engagement. Sits between earlier extremes (-3.0 was too hard,
-        # baseline dropped the nut; -1.0 was too easy, tactile hit success
-        # almost trivially). With -2.0:
-        #   - Tactile-aided policy reaches success after threading 2 turns
-        #   - Baseline-only policy can also eventually solve, but needs to
-        #     discover yaw direction from sparse curr_success bonus alone
+        # Tighter success: nut threaded 3 full thread pitches (~6mm) deep —
+        # policy must sustain ~3 full wrist-yaw revolutions past initial
+        # engagement. Iteration history:
+        #   - `-5.0` (10mm): too hard, baseline dropped the nut early
+        #   - `-3.0` (6mm): tactile struggled but baseline could crack
+        #   - `-2.0` (4mm): both could crack ~30%
+        #   - `-1.0` (2mm): tactile hit success trivially, no headroom for ablation
+        # 2026-05-25: bumped back to -3 — tactile+yaw_diff_obs+sharp_xy reward
+        # changes should now give tactile enough signal to crack the harder depth.
         # Combined with the shifted z reward (forge_nutpickplace_env._get_rewards),
-        # the dense `r_descent` / `r_z_descend` peaks at z_disp = -4mm.
-        self.task.success_threshold = -2.0
+        # the dense `r_descent` / `r_z_descend` peaks at z_disp = -6mm.
+        self.task.success_threshold = -3.0
         # Remove the "rotate-one-direction-only" hardware constraint. By default
         # nut_thread sets unidirectional_rot=True, which silently clamps any
         # commanded positive delta_yaw to 0 — meaning the wrist can only ever

@@ -34,7 +34,19 @@ class ForgeEnv(FactoryEnv):
         """Initialize simulation scene and optional tactile sensors."""
         super()._setup_scene()
 
-        if hasattr(self.cfg, "left_tactile_sensor"):
+        # Speed escape hatch: skip GelSight sensor creation when set. Saves the
+        # per-step rendering cost (~30-40% of step time) for runs that don't
+        # need tactile — baseline A no-tactile-reward variants, debugging, etc.
+        # Code paths that later read sensor outputs (tactile reward model,
+        # baseline B/B2 obs, FORGE_SAVE_TACTILE_FORCE_FIELD) all guard on
+        # `"left_tactile_sensor" in self.scene.sensors`, so skipping is safe
+        # so long as those features aren't enabled in the same run.
+        # The cfg has already been nulled in ForgeEnvCfg.__post_init__ for the
+        # scene auto-detection; here we additionally skip the manual fallback.
+        if os.getenv("FORGE_SKIP_TACTILE_SENSORS", "0") == "1":
+            return
+
+        if getattr(self.cfg, "left_tactile_sensor", None) is not None:
             left_tactile_cfg = copy.deepcopy(self.cfg.left_tactile_sensor)
             left_tactile_cfg.prim_path = left_tactile_cfg.prim_path.format(ENV_REGEX_NS=self.scene.env_regex_ns)
             left_tactile_cfg.camera_cfg.prim_path = left_tactile_cfg.camera_cfg.prim_path.format(
@@ -46,7 +58,7 @@ class ForgeEnv(FactoryEnv):
             self._left_tactile_sensor = VisuoTactileSensor(left_tactile_cfg)
             self.scene.sensors["left_tactile_sensor"] = self._left_tactile_sensor
 
-        if hasattr(self.cfg, "right_tactile_sensor"):
+        if getattr(self.cfg, "right_tactile_sensor", None) is not None:
             right_tactile_cfg = copy.deepcopy(self.cfg.right_tactile_sensor)
             right_tactile_cfg.prim_path = right_tactile_cfg.prim_path.format(ENV_REGEX_NS=self.scene.env_regex_ns)
             right_tactile_cfg.camera_cfg.prim_path = right_tactile_cfg.camera_cfg.prim_path.format(
@@ -121,13 +133,40 @@ class ForgeEnv(FactoryEnv):
         self._tactile_max_buffer_frames = int(os.getenv("FORGE_TACTILE_MAX_BUFFER_FRAMES", "500000"))
         self._tactile_saved_episode_count = 0
         self._tactile_step_in_episode = 0
-        if self._save_tactile_force_field and self._save_tactile_all_envs:
-            self._tactile_episode_frames = [[] for _ in range(self.num_envs)]
+
+        # If FORGE_SKIP_TACTILE_SENSORS=1 took the GelSight sensors out, tactile
+        # data collection has nothing to read — silently downgrade the tactile
+        # save flag so the code path below doesn't crash. Camera-only saving
+        # still works via FORGE_SAVE_CAMERA below.
+        if self._save_tactile_force_field and "left_tactile_sensor" not in self.scene.sensors:
+            print("[TactileSave] FORGE_SAVE_TACTILE_FORCE_FIELD=1 but tactile sensors absent; "
+                  "disabling tactile save (camera-only is still allowed via FORGE_SAVE_CAMERA).")
+            self._save_tactile_force_field = False
+
+        # RGB front-camera save (independent of tactile save). Triggered when
+        # the camera is in the scene AND FORGE_SAVE_CAMERA=1 is set (or the
+        # legacy combined behavior: tactile save on + camera attached).
+        camera_present = "front_cam" in self.scene.sensors and getattr(self.cfg, "enable_front_cam", False)
+        self._save_front_cam = camera_present and (
+            os.getenv("FORGE_SAVE_CAMERA", "0") == "1" or self._save_tactile_force_field
+        )
+
+        self._save_any_trajectory = self._save_tactile_force_field or self._save_front_cam
+
+        if self._save_any_trajectory:
+            os.makedirs(self._tactile_save_dir, exist_ok=True)
+
+        if self._save_tactile_all_envs:
             self._tactile_step_in_episode_per_env = [0] * self.num_envs
+            self._tactile_episode_frames = (
+                [[] for _ in range(self.num_envs)] if self._save_tactile_force_field else []
+            )
+            self._camera_episode_frames = (
+                [[] for _ in range(self.num_envs)] if self._save_front_cam else []
+            )
         else:
             self._tactile_episode_frames = []
-        if self._save_tactile_force_field:
-            os.makedirs(self._tactile_save_dir, exist_ok=True)
+            self._camera_episode_frames = []
 
         # Optional Tactile-ReWiND progress reward.
         self._init_tactile_reward()
@@ -598,35 +637,51 @@ class ForgeEnv(FactoryEnv):
                        is a flat list.
         env_id=int   → multi-env mode; flush `_tactile_episode_frames[env_id]`.
         """
-        if not self._save_tactile_force_field:
+        if not self._save_any_trajectory:
             return
-        frames = (
+
+        tactile_frames = (
             self._tactile_episode_frames if env_id is None
             else self._tactile_episode_frames[env_id]
-        )
-        if not frames:
+        ) if self._save_tactile_force_field else None
+        cam_frames = (
+            self._camera_episode_frames if env_id is None
+            else self._camera_episode_frames[env_id]
+        ) if self._save_front_cam else None
+
+        # Bail if both buffers are empty — nothing to write for this episode.
+        if not tactile_frames and not cam_frames:
             return
 
         # Legacy single-env path keeps the plain `ep{N}.npy` name; multi-env
         # path appends the source env id so downstream tooling can group / dedupe.
         if env_id is None:
-            fname = f"ep{self._tactile_saved_episode_count}.npy"
+            base_fname = f"ep{self._tactile_saved_episode_count}"
         else:
-            fname = f"ep{self._tactile_saved_episode_count}_env{env_id:03d}.npy"
-        episode_path = os.path.join(self._tactile_save_dir, fname)
-        episode_tensor = np.stack(frames, axis=0).astype(np.float16, copy=False)
-        payload = {
-            "Task": "grasp peg and insert to another hole",
-            "Tactile": episode_tensor,
-            "Success": int(success),
-        }
-        np.save(episode_path, payload, allow_pickle=True)
-        frames.clear()
+            base_fname = f"ep{self._tactile_saved_episode_count}_env{env_id:03d}"
+
+        if tactile_frames:
+            episode_path = os.path.join(self._tactile_save_dir, f"{base_fname}.npy")
+            episode_tensor = np.stack(tactile_frames, axis=0).astype(np.float16, copy=False)
+            payload = {
+                "Task": "grasp peg and insert to another hole",
+                "Tactile": episode_tensor,
+                "Success": int(success),
+            }
+            np.save(episode_path, payload, allow_pickle=True)
+            tactile_frames.clear()
+
+        if cam_frames:
+            cam_path = os.path.join(self._tactile_save_dir, f"{base_fname}_camera.npy")
+            cam_tensor = np.stack(cam_frames, axis=0).astype(np.uint8, copy=False)
+            np.save(cam_path, cam_tensor)
+            cam_frames.clear()
+
         self._tactile_saved_episode_count += 1
 
     def _save_env0_tactile_force_field(self):
-        """Buffer target-env tactile tensors and flush one .npy file per episode."""
-        if not self._save_tactile_force_field:
+        """Buffer target-env tactile / camera tensors and flush one .npy per episode."""
+        if not self._save_any_trajectory:
             return
 
         if self._save_tactile_all_envs:
@@ -637,8 +692,6 @@ class ForgeEnv(FactoryEnv):
 
         # Detect episode boundary: target env just reset this step.
         if self.reset_buf[target_env_id]:
-            # `ep_succeeded[target_env_id]` reflects the just-finished episode's
-            # outcome (set during the step's success check, before reset).
             success = (
                 int(self.ep_succeeded[target_env_id].item())
                 if hasattr(self, "ep_succeeded") else 0
@@ -651,25 +704,36 @@ class ForgeEnv(FactoryEnv):
             self._tactile_step_in_episode += 1
             return
 
-        left_sensor = self.scene.sensors["left_tactile_sensor"]
-        right_sensor = self.scene.sensors["right_tactile_sensor"]
-        left_rows, left_cols = left_sensor.cfg.tactile_array_size
-        right_rows, right_cols = right_sensor.cfg.tactile_array_size
+        # Tactile branch — only when sensors are present AND tactile save is on.
+        if self._save_tactile_force_field and "left_tactile_sensor" in self.scene.sensors:
+            left_sensor = self.scene.sensors["left_tactile_sensor"]
+            right_sensor = self.scene.sensors["right_tactile_sensor"]
+            left_rows, left_cols = left_sensor.cfg.tactile_array_size
+            right_rows, right_cols = right_sensor.cfg.tactile_array_size
 
-        left_normal_all = left_sensor.data.tactile_normal_force.view(self.num_envs, left_rows, left_cols)
-        left_shear_all = left_sensor.data.tactile_shear_force.view(self.num_envs, left_rows, left_cols, 2)
-        right_normal_all = right_sensor.data.tactile_normal_force.view(self.num_envs, right_rows, right_cols)
-        right_shear_all = right_sensor.data.tactile_shear_force.view(self.num_envs, right_rows, right_cols, 2)
+            left_normal_all = left_sensor.data.tactile_normal_force.view(self.num_envs, left_rows, left_cols)
+            left_shear_all = left_sensor.data.tactile_shear_force.view(self.num_envs, left_rows, left_cols, 2)
+            right_normal_all = right_sensor.data.tactile_normal_force.view(self.num_envs, right_rows, right_cols)
+            right_shear_all = right_sensor.data.tactile_shear_force.view(self.num_envs, right_rows, right_cols, 2)
 
-        left_normal = left_normal_all[target_env_id].detach().cpu().numpy()
-        left_shear = left_shear_all[target_env_id].detach().cpu().numpy()
-        right_normal = right_normal_all[target_env_id].detach().cpu().numpy()
-        right_shear = right_shear_all[target_env_id].detach().cpu().numpy()
+            left_normal = left_normal_all[target_env_id].detach().cpu().numpy()
+            left_shear = left_shear_all[target_env_id].detach().cpu().numpy()
+            right_normal = right_normal_all[target_env_id].detach().cpu().numpy()
+            right_shear = right_shear_all[target_env_id].detach().cpu().numpy()
 
-        left_force_field = np.concatenate((left_normal[..., None], left_shear), axis=-1)
-        right_force_field = np.concatenate((right_normal[..., None], right_shear), axis=-1)
-        tactile_frame = np.concatenate((left_force_field, right_force_field), axis=0)
-        self._tactile_episode_frames.append(tactile_frame.astype(np.float16, copy=False))
+            left_force_field = np.concatenate((left_normal[..., None], left_shear), axis=-1)
+            right_force_field = np.concatenate((right_normal[..., None], right_shear), axis=-1)
+            tactile_frame = np.concatenate((left_force_field, right_force_field), axis=0)
+            self._tactile_episode_frames.append(tactile_frame.astype(np.float16, copy=False))
+
+        # Camera branch — runs independently of tactile.
+        if self._save_front_cam:
+            cam_frame = (
+                self.scene.sensors["front_cam"].data.output["rgb"][target_env_id, ..., :3]
+                .detach().cpu().numpy().astype(np.uint8, copy=False)
+            )
+            self._camera_episode_frames.append(cam_frame)
+
         self._tactile_step_in_episode += 1
 
     def _save_all_envs_tactile_force_field(self):
@@ -692,8 +756,16 @@ class ForgeEnv(FactoryEnv):
             self._flush_tactile_episode(success=success, env_id=env_id)
             self._tactile_step_in_episode_per_env[env_id] = 0
 
-        # 2) Memory safety: total frames across all per-env buffers.
-        total_frames = sum(len(buf) for buf in self._tactile_episode_frames)
+        # 2) Memory safety: total frames across both tactile + camera buffers.
+        tactile_buf_len = (
+            sum(len(buf) for buf in self._tactile_episode_frames)
+            if self._save_tactile_force_field else 0
+        )
+        camera_buf_len = (
+            sum(len(buf) for buf in self._camera_episode_frames)
+            if self._save_front_cam else 0
+        )
+        total_frames = tactile_buf_len + camera_buf_len
         if total_frames >= self._tactile_max_buffer_frames:
             if not getattr(self, "_tactile_overflow_warned", False):
                 print(
@@ -708,27 +780,41 @@ class ForgeEnv(FactoryEnv):
             return
         self._tactile_overflow_warned = False
 
-        # 3) Single GPU→CPU transfer for the whole batch.
-        left_sensor = self.scene.sensors["left_tactile_sensor"]
-        right_sensor = self.scene.sensors["right_tactile_sensor"]
-        nrows, ncols = left_sensor.cfg.tactile_array_size
-        left_normal = left_sensor.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
-        left_shear = left_sensor.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
-        right_normal = right_sensor.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
-        right_shear = right_sensor.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
-        left_full = torch.cat([left_normal, left_shear], dim=-1)
-        right_full = torch.cat([right_normal, right_shear], dim=-1)
-        all_frames = (
-            torch.cat([left_full, right_full], dim=1)
-            .detach().cpu().numpy().astype(np.float16, copy=False)
-        )
+        # 3) Batch GPU→CPU transfers (tactile is gated by sensor presence,
+        # camera is independent — either may be active alone).
+        all_frames = None
+        cam_all = None
+
+        if self._save_tactile_force_field and "left_tactile_sensor" in self.scene.sensors:
+            left_sensor = self.scene.sensors["left_tactile_sensor"]
+            right_sensor = self.scene.sensors["right_tactile_sensor"]
+            nrows, ncols = left_sensor.cfg.tactile_array_size
+            left_normal = left_sensor.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+            left_shear = left_sensor.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
+            right_normal = right_sensor.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+            right_shear = right_sensor.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
+            left_full = torch.cat([left_normal, left_shear], dim=-1)
+            right_full = torch.cat([right_normal, right_shear], dim=-1)
+            all_frames = (
+                torch.cat([left_full, right_full], dim=1)
+                .detach().cpu().numpy().astype(np.float16, copy=False)
+            )
+
+        if self._save_front_cam:
+            cam_all = (
+                self.scene.sensors["front_cam"].data.output["rgb"][..., :3]
+                .detach().cpu().numpy().astype(np.uint8, copy=False)
+            )
 
         # 4) Per-env append, respecting save_interval against this env's
         #    step-in-episode counter.
         for env_id in range(self.num_envs):
             step = self._tactile_step_in_episode_per_env[env_id]
             if step % self._tactile_save_interval == 0:
-                self._tactile_episode_frames[env_id].append(all_frames[env_id])
+                if all_frames is not None:
+                    self._tactile_episode_frames[env_id].append(all_frames[env_id])
+                if cam_all is not None:
+                    self._camera_episode_frames[env_id].append(cam_all[env_id])
             self._tactile_step_in_episode_per_env[env_id] = step + 1
 
     def _compute_intermediate_values(self, dt):
@@ -793,10 +879,12 @@ class ForgeEnv(FactoryEnv):
     def _get_observations(self):
         """Add additional FORGE observations."""
         obs_dict, state_dict = self._get_factory_obs_state_dict()
+        # Trajectory save (tactile and/or camera) runs once per step, before
+        # the optional tactile-obs branch — works even when sensors are absent.
+        self._save_env0_tactile_force_field()
         if "left_tactile_sensor" in self.scene.sensors:
             left_normal_force, left_shear_force = self._get_tactile_force_tensors("left_tactile_sensor")
             right_normal_force, right_shear_force = self._get_tactile_force_tensors("right_tactile_sensor")
-            self._save_env0_tactile_force_field()
             obs_dict.update(
                 {
                     "left_tactile_normal_force": left_normal_force,
