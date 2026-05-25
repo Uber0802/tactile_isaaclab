@@ -13,7 +13,7 @@ CACHE_DIR="/tmp/${USER}_${HOSTNAME%%.*}_isaac"
 mkdir -p "$CACHE_DIR/tmp" "$CACHE_DIR/cache/ov" "$CACHE_DIR/torch/triton" "$CACHE_DIR/torch/inductor"
 
 CKPTS_DIR=/mnt/home/tactile/tactile_isaaclab/logs/rl_games/ForgeNutPickPlace/NutThread_PickPlace_baselineA/nn
-BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/nutpickplace_curriculum
+BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/nutpickplace_curriculum_rgb
 
 # Curriculum spectrum: sample 1-out-of-every-STRIDE saved snapshots so we hit
 # the whole skill range without rolling out every single ckpt.
@@ -57,8 +57,10 @@ for ckpt_name in "${CKPTS[@]}"; do
     TORCH_HOME="$CACHE_DIR/torch" \
     TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
     TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-    FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
+    FORGE_SKIP_TACTILE_SENSORS=1 \
     FORGE_SAVE_TACTILE_ALL_ENVS=1 \
+    FORGE_SAVE_CAMERA=1 \
+    FORGE_ENABLE_FRONT_CAM=1 \
     FORGE_TACTILE_SAVE_DIR="$save_dir" \
     ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
         --task Isaac-Forge-NutThread-PickPlace-Direct-v0 \
