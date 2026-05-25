@@ -15,13 +15,13 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
+FORGE_SKIP_TACTILE_SENSORS=1 \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
     --baseline A_hard_success \
     --headless \
     --num_envs 256 \
     --max_iterations 10000 \
-    --enable_cameras \
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \

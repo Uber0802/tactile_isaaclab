@@ -22,6 +22,13 @@ OBS_DIM_CFG.update({"held_pos_rel_fixed": 3, "held_quat": 4})
 # transport / descent rewards minimise.
 OBS_DIM_CFG.update({"target_pos": 3, "fingertip_to_target": 3, "gear_to_target": 3})
 
+# Yaw mismatch (gear_yaw − fixed_yaw) as (sin, cos) pair — continuous
+# representation avoids ±π wrap discontinuity. Lets the actor explicitly
+# observe "how far off in yaw" instead of having to extract it from raw
+# `held_quat` / `fixed_quat`.
+OBS_DIM_CFG.update({"yaw_diff_to_fixed": 2})
+STATE_DIM_CFG.update({"yaw_diff_to_fixed": 2})
+
 
 @configclass
 class GearPickPlaceCtrlCfg(ForgeCtrlCfg):
@@ -57,6 +64,8 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         "target_pos",
         "fingertip_to_target",
         "gear_to_target",
+        # Explicit yaw mismatch (sin, cos of gear_yaw − fixed_yaw).
+        "yaw_diff_to_fixed",
     ]
 
     # Critic state — also strip force-related entries so the asymmetric critic
@@ -74,6 +83,7 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         "held_quat",
         "fixed_pos",
         "fixed_quat",
+        "yaw_diff_to_fixed",
         "task_prop_gains",
         "ema_factor",
         # "ft_force",        # commented for no-tactile baseline
@@ -89,6 +99,15 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         # that closing the gripper friction-grips it instead of pushing the
         # weightless gear out of the fingers.
         self.task.held_asset.spawn.rigid_props.disable_gravity = False
+
+        # Gear-only PhysX bump: support 4096-env speed runs. Default factory
+        # cfg uses 2**29 (~0.5 GB) collision stack which PhysX overflows at
+        # ~1.5 GB needed for 4096 gear envs (flanking gears triple the contact
+        # pairs vs peg / nut). 2**31 (~2.1 GB) gives headroom. Scoped to gear
+        # so peg / nut keep their lighter defaults.
+        self.sim.physx.gpu_max_rigid_contact_count = 2**24
+        self.sim.physx.gpu_max_rigid_patch_count = 2**24
+        self.sim.physx.gpu_collision_stack_size = 2**31
 
     # ------------------------------------------------------------------
     # Baseline switch (called by train.py after env_cfg is loaded).
@@ -179,21 +198,29 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         self.task.hand_init_orn_noise = [0.0, 0.0, 0.0]
 
     def _apply_baseline_A_hard_success_yaw01(self) -> None:
-        """A_hard_success_yaw01: identical to A_hard_success EXCEPT the yaw
-        reward is restored at 10% of the default scale (0.1 vs original 1.0).
-        Designed as a mild guidance variant — gives the baseline a tiny hint
-        about which yaw direction reduces the gear-bolt yaw delta, without
-        making yaw a dominant signal.
+        """A_hard_success_yaw01: identical to A_hard_success EXCEPT yaw shaping
+        is restored with a wider gate. Previous attempt (yaw_reward=0.1,
+        yaw_scale=0.1 rad ≈ 6°) failed because at the observed 35° drift the
+        signal collapsed to exp(-0.6/0.1) ≈ 0.0025 — effectively zero gradient.
+
+        2026-05-23: bumped to give actual gradient at the drift the gripper
+        induces on pickup:
+          - `yaw_reward_scale = 1.0` (was 0.1) — full-strength signal
+          - `yaw_alignment_scale = 0.5 rad ≈ 28°` (was 0.1) — exp(-0.6/0.5)
+            ≈ 0.30 at 35° drift, exp(-0.1/0.5) ≈ 0.82 inside 6° → still
+            sharp enough at the goal to reward true alignment
 
         Use case: paper ablation pair
-          - `A_hard_success`(yaw_reward=0): strictest, baseline may stall
-          - `A_hard_success_yaw01`(yaw_reward=0.1): mild hint, baseline can
-            slowly learn yaw, tactile still adds value on top
+          - `A_hard_success`(yaw=0): strictest, baseline likely stalls
+          - `A_hard_success_yaw01`(yaw_loose): broader gate, baseline can
+            learn yaw from 35° drift, tactile still adds value on top
         """
         # Reuse all A_hard_success ablations (yaw=0, success=-0.3, yaw fixed).
         self._apply_baseline_A_hard_success()
-        # Restore yaw_reward at 10% of default 1.0 → mild but non-zero guidance.
-        self.task.yaw_reward_scale = 0.1
+        # Wider yaw gate + full-strength reward so policy has gradient even at
+        # the 30-40° drift induced by gripper twist during pickup.
+        self.task.yaw_reward_scale = 1.0
+        self.task.yaw_alignment_scale = 0.5
 
     def _apply_baseline_single_pos(self) -> None:
         """Single-position baseline: identical to A in obs/state, but zero out

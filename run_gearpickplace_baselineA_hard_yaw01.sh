@@ -15,16 +15,16 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
+FORGE_SKIP_TACTILE_SENSORS=1 \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
     --baseline A_hard_success_yaw01 \
     --headless \
     --num_envs 256 \
     --max_iterations 10000 \
-    --enable_cameras \
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name GearMesh_PickPlace_baselineA_hard_success_yaw01 \
-    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineA_hard_success_yaw01 \
+    --wandb-name GearMesh_PickPlace_baselineA_hard_success_yaw01_yawinput \
+    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineA_hard_success_yaw01_yawinput \
     agent.params.config.save_frequency=20

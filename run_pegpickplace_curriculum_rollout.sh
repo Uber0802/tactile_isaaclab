@@ -12,22 +12,34 @@ set -e
 CACHE_DIR="/tmp/${USER}_${HOSTNAME%%.*}_isaac"
 mkdir -p "$CACHE_DIR/tmp" "$CACHE_DIR/cache/ov" "$CACHE_DIR/torch/triton" "$CACHE_DIR/torch/inductor"
 
-CKPTS_DIR=/mnt/home/tactile/tactile_isaaclab/logs/rl_games/ForgePickPlace/PegInsert_PickPlace_baselineA/nn
-BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/pegpickplace_curriculum
+CKPTS_DIR=/mnt/home/tactile/tactile_isaaclab/logs/rl_games/ForgePickPlace/PegInsert_PickPlace_baselineA_legacy/nn
+BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/pegpickplace_curriculum_rgb
 
-# Curriculum spectrum: peg baselineA was saved at default save_frequency=100 →
-# 8 snapshots over ep_100..ep_800 (rew 556 → 1354). Stride 1 uses all of them.
-CKPT_STRIDE=1
-mapfile -t ALL_CKPTS < <(ls -v "$CKPTS_DIR"/last_ForgePickPlace_ep_*.pth 2>/dev/null)
+# Explicit ep list picked across the r4tddjlv (2026-05-22 ~ 05-24) skill curve:
+#   ep_100..1000  = pre-crack (0% success)
+#   ep_1100..1500 = crack region (5-50%)
+#   ep_1600..2100 = consolidation (50-74%)
+#   ep_2400..2700 = peak region (74-91%)
+# This dir mixes two runs (May 20-21 vhhj6i3c + May 22-24 r4tddjlv) — the date
+# filter `-newermt 2026-05-22 11:30` picks only r4tddjlv's snapshots so we get
+# a consistent skill trajectory rather than mixed-policy ckpts.
+TARGET_EPS=(100 300 500 700 1000 1100 1500 1600 1900 2100 2400 2700)
 CKPTS=()
-for ((i=0; i<${#ALL_CKPTS[@]}; i+=CKPT_STRIDE)); do
-    CKPTS+=("$(basename "${ALL_CKPTS[$i]}")")
+for ep in "${TARGET_EPS[@]}"; do
+    match=$(find "$CKPTS_DIR" -name "last_ForgePickPlace_ep_${ep}_rew_*.pth" \
+        -newermt "2026-05-22 11:30" ! -newermt "2026-05-24 03:00" 2>/dev/null | head -1)
+    if [ -n "$match" ]; then
+        CKPTS+=("$(basename "$match")")
+    else
+        echo "[warn] missing r4tddjlv ep_$ep — skipping"
+    fi
 done
+echo "Selected ${#CKPTS[@]} ckpts: ${CKPTS[*]}"
 
 # Per-ckpt rollout budget. One PPO iter ≈ horizon_length (256) × num_envs steps.
 # At 20 s episode length and 15 Hz control, ~300 steps per episode, so 20 iters
 # × 256 horizon × 128 envs ≈ ~2.7k episodes per ckpt. Tune to taste.
-ITERS_PER_CKPT=10
+ITERS_PER_CKPT=5
 SIGMA=0.3   # mild action noise so the 128 envs aren't identical; lower=more deterministic
 
 for ckpt_name in "${CKPTS[@]}"; do
@@ -55,8 +67,10 @@ for ckpt_name in "${CKPTS[@]}"; do
     TORCH_HOME="$CACHE_DIR/torch" \
     TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
     TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-    FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
+    FORGE_SKIP_TACTILE_SENSORS=1 \
     FORGE_SAVE_TACTILE_ALL_ENVS=1 \
+    FORGE_SAVE_CAMERA=1 \
+    FORGE_ENABLE_FRONT_CAM=1 \
     FORGE_TACTILE_SAVE_DIR="$save_dir" \
     ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
         --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \

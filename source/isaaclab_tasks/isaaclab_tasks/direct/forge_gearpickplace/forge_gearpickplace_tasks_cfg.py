@@ -108,3 +108,8 @@ class ForgeGearMeshPickPlace(ForgeGearMesh):
     # so the policy isn't pulled to spin the gripper while still in transit.
     yaw_reward_scale: float = 1.0
     yaw_alignment_scale: float = 0.1  # rad ≈ 6°
+    # Z-proximity gate on r_yaw — exp(-z_dist / scale). Only reward yaw
+    # alignment once the gear is genuinely close to the meshing pose, so the
+    # policy doesn't spin the gripper at 5 cm height while ignoring descent.
+    # z_dist=0 → 1.0 (full reward), z_dist=2 cm → 0.37, z_dist=5 cm → 0.08.
+    yaw_z_gate_scale: float = 0.02

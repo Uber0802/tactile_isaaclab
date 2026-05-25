@@ -89,7 +89,9 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
-        if hasattr(self.cfg, "left_tactile_sensor"):
+        # Respect FORGE_SKIP_TACTILE_SENSORS — cfg fields are set to None in
+        # ForgeEnvCfg.__post_init__ when the speed escape hatch is on.
+        if getattr(self.cfg, "left_tactile_sensor", None) is not None:
             left_tactile_cfg = copy.deepcopy(self.cfg.left_tactile_sensor)
             left_tactile_cfg.prim_path = left_tactile_cfg.prim_path.format(ENV_REGEX_NS=self.scene.env_regex_ns)
             left_tactile_cfg.camera_cfg.prim_path = left_tactile_cfg.camera_cfg.prim_path.format(
@@ -101,7 +103,7 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
             self._left_tactile_sensor = VisuoTactileSensor(left_tactile_cfg)
             self.scene.sensors["left_tactile_sensor"] = self._left_tactile_sensor
 
-        if hasattr(self.cfg, "right_tactile_sensor"):
+        if getattr(self.cfg, "right_tactile_sensor", None) is not None:
             right_tactile_cfg = copy.deepcopy(self.cfg.right_tactile_sensor)
             right_tactile_cfg.prim_path = right_tactile_cfg.prim_path.format(ENV_REGEX_NS=self.scene.env_regex_ns)
             right_tactile_cfg.camera_cfg.prim_path = right_tactile_cfg.camera_cfg.prim_path.format(
@@ -210,10 +212,11 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         """
         obs_dict, state_dict = self._get_factory_obs_state_dict()
 
+        # Trajectory save (tactile and/or camera) runs once per step.
+        self._save_env0_tactile_force_field()
         if "left_tactile_sensor" in self.scene.sensors:
             left_normal_force, left_shear_force = self._get_tactile_force_tensors("left_tactile_sensor")
             right_normal_force, right_shear_force = self._get_tactile_force_tensors("right_tactile_sensor")
-            self._save_env0_tactile_force_field()
             # Populate the same 4 tactile entries into both dicts. Whether they
             # actually feed into the actor / critic is decided by `obs_order` /
             # `state_order` (see `apply_baseline` in env_cfg). Baseline A does
@@ -251,6 +254,14 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
             self.held_pos, self.held_quat, self.cfg_task.name, self.cfg_task.fixed_asset_cfg, self.num_envs, self.device
         )
 
+        # Explicit yaw mismatch as (sin, cos) — continuous representation.
+        _, _, fixed_yaw_obs = torch_utils.get_euler_xyz(self.fixed_quat)
+        _, _, gear_yaw_obs = torch_utils.get_euler_xyz(self.held_quat)
+        yaw_diff_obs = gear_yaw_obs - fixed_yaw_obs
+        yaw_diff_sincos = torch.stack(
+            [torch.sin(yaw_diff_obs), torch.cos(yaw_diff_obs)], dim=-1
+        )
+
         obs_dict.update(
             {
                 "fingertip_pos": self.noisy_fingertip_pos,
@@ -265,6 +276,7 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
                 "target_pos": target_held_base_pos,
                 "fingertip_to_target": target_held_base_pos - self.noisy_fingertip_pos,
                 "gear_to_target": target_held_base_pos - held_base_pos,
+                "yaw_diff_to_fixed": yaw_diff_sincos,
             }
         )
 
@@ -274,6 +286,7 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
                 "ft_force": self.force_sensor_smooth[:, 0:3],
                 "force_threshold": self.contact_penalty_thresholds[:, None],
                 "prev_actions": prev_actions,
+                "yaw_diff_to_fixed": yaw_diff_sincos,
             }
         )
 
@@ -392,13 +405,21 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         r_z_descend = r_lift * xy_coarse * z_progress_coarse
 
         # (7) Yaw alignment reward — geometric-base offsets in xy_dist cancel only
-        # when gear_yaw ≈ fixed_yaw. Gated on `xy_coarse` so the policy doesn't
-        # burn yaw budget during pure transport.
+        # when gear_yaw ≈ fixed_yaw. Triple-gated on (xy_coarse × z_close × lift)
+        # so the policy only spends "yaw budget" once the gear is genuinely
+        # close to the meshing pose:
+        #   - r_lift: gear must be picked up (no farming yaw on the table)
+        #   - xy_coarse: gear roughly over the bolt
+        #   - z_close: gear within ~2 cm of the success-boundary z
+        # Without the z gate, policy was pulled to correct yaw while still
+        # hovering 5+ cm above the bolt, ignoring approach/lift/descent and
+        # never actually progressing to meshing.
         _, _, fixed_yaw = torch_utils.get_euler_xyz(self.fixed_quat)
         _, _, gear_yaw = torch_utils.get_euler_xyz(self.held_quat)
         yaw_diff = gear_yaw - fixed_yaw
         yaw_diff = torch.atan2(torch.sin(yaw_diff), torch.cos(yaw_diff))  # wrap to [-pi, pi]
-        r_yaw = xy_coarse * torch.exp(-torch.abs(yaw_diff) / self.cfg_task.yaw_alignment_scale)
+        z_close = torch.exp(-z_dist / self.cfg_task.yaw_z_gate_scale)
+        r_yaw = r_lift * xy_coarse * z_close * torch.exp(-torch.abs(yaw_diff) / self.cfg_task.yaw_alignment_scale)
 
         rew_buf = (
             rew_buf

@@ -9,7 +9,7 @@ import isaaclab.envs.mdp as mdp
 import isaaclab.sim as sim_utils
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.sensors import TiledCameraCfg
+from isaaclab.sensors import CameraCfg, TiledCameraCfg
 from isaaclab.utils import configclass
 
 from isaaclab_assets.sensors import GELSIGHT_R15_CFG
@@ -130,6 +130,49 @@ class ForgeEnvCfg(FactoryEnvCfg):
 
     ft_smoothing_factor: float = 0.25
 
+    # Optional 3rd-person RGB camera (for video logging / dataset collection).
+    # Activated by env var FORGE_ENABLE_FRONT_CAM=1. Independent from tactile
+    # sensors — works alongside or without them. Requires --enable_cameras flag.
+    enable_front_cam: bool = os.environ.get("FORGE_ENABLE_FRONT_CAM", "0") == "1"
+
+    def _attach_front_cam_if_enabled(self) -> None:
+        """Attach a 3rd-person RGB camera to self.scene when enabled.
+
+        Called from each task-specific cfg's __post_init__ after the scene is
+        set up. The camera is positioned 1 m in front of the robot, 0.4 m above
+        the table, looking down at the workspace — matches the StackTactileEnv
+        offset since the Franka/table layout is the same.
+        """
+        if not self.enable_front_cam:
+            return
+        # Use TiledCameraCfg (not CameraCfg) — it batches all envs into a
+        # single tiled render target, so the GPU only allocates one parameter
+        # block per type instead of `num_envs` of them. With 128+ envs and the
+        # GelSight sensors also rendering, regular CameraCfg exhausts the RTX
+        # descriptor pool and throws "Failed to allocate ParameterBlock".
+        self.scene.front_cam = TiledCameraCfg(
+            prim_path="{ENV_REGEX_NS}/front_cam",
+            update_period=0.0,
+            height=224,
+            width=224,
+            data_types=["rgb"],
+            spawn=sim_utils.PinholeCameraCfg(
+                focal_length=24.0,
+                focus_distance=400.0,
+                horizontal_aperture=20.955,
+                # Bumped from (0.1, 2.0) to (0.1, 5.0) since the back-off
+                # below puts more of the workspace beyond the old 2 m far clip.
+                clipping_range=(0.1, 2.5),
+            ),
+            offset=TiledCameraCfg.OffsetCfg(
+                # Moved camera back from 1.0 m to 1.6 m and up from 0.4 to 0.5
+                # so the Franka arm doesn't crowd the foreground.
+                pos=(1.2, 0.0, 0.4),
+                rot=(0.35355, -0.61237, -0.61237, 0.35355),
+                convention="ros",
+            ),
+        )
+
     obs_order: list = [
         "fingertip_pos_rel_fixed",
         "fingertip_quat",
@@ -244,6 +287,16 @@ class ForgeTaskPegInsertCfg(ForgeEnvCfg):
         self.sim.render_interval = self.decimation
         self.scene.replicate_physics = False
         self.scene.clone_in_fabric = False
+        # Speed escape hatch: when FORGE_SKIP_TACTILE_SENSORS=1, drop the
+        # GelSight sensors from the cfg BEFORE InteractiveScene auto-detects
+        # them (its attribute scan instantiates anything that is-a
+        # SensorBaseCfg, so a runtime _setup_scene skip is too late — the
+        # camera gets spawned during the parent scene init).
+        if os.getenv("FORGE_SKIP_TACTILE_SENSORS", "0") == "1":
+            self.left_tactile_sensor = None
+            self.right_tactile_sensor = None
+        # Optional 3rd-person RGB camera (env var FORGE_ENABLE_FRONT_CAM=1).
+        self._attach_front_cam_if_enabled()
         self.robot = self.robot.replace(
             spawn=sim_utils.UsdFileWithCompliantContactCfg(
                 usd_path=PEG_INSERT_ROBOT_USD_PATH,
@@ -315,6 +368,16 @@ class ForgeTaskGearMeshCfg(ForgeEnvCfg):
         self.sim.render_interval = self.decimation
         self.scene.replicate_physics = False
         self.scene.clone_in_fabric = False
+        # Speed escape hatch: when FORGE_SKIP_TACTILE_SENSORS=1, drop the
+        # GelSight sensors from the cfg BEFORE InteractiveScene auto-detects
+        # them (its attribute scan instantiates anything that is-a
+        # SensorBaseCfg, so a runtime _setup_scene skip is too late — the
+        # camera gets spawned during the parent scene init).
+        if os.getenv("FORGE_SKIP_TACTILE_SENSORS", "0") == "1":
+            self.left_tactile_sensor = None
+            self.right_tactile_sensor = None
+        # Optional 3rd-person RGB camera (env var FORGE_ENABLE_FRONT_CAM=1).
+        self._attach_front_cam_if_enabled()
         self.robot = self.robot.replace(
             spawn=sim_utils.UsdFileWithCompliantContactCfg(
                 usd_path=PEG_INSERT_ROBOT_USD_PATH,
@@ -418,6 +481,16 @@ class ForgeTaskNutThreadCfg(ForgeEnvCfg):
         self.sim.render_interval = self.decimation
         self.scene.replicate_physics = False
         self.scene.clone_in_fabric = False
+        # Speed escape hatch: when FORGE_SKIP_TACTILE_SENSORS=1, drop the
+        # GelSight sensors from the cfg BEFORE InteractiveScene auto-detects
+        # them (its attribute scan instantiates anything that is-a
+        # SensorBaseCfg, so a runtime _setup_scene skip is too late — the
+        # camera gets spawned during the parent scene init).
+        if os.getenv("FORGE_SKIP_TACTILE_SENSORS", "0") == "1":
+            self.left_tactile_sensor = None
+            self.right_tactile_sensor = None
+        # Optional 3rd-person RGB camera (env var FORGE_ENABLE_FRONT_CAM=1).
+        self._attach_front_cam_if_enabled()
         # Bump hand_init_pos[2] from the default 1.5 cm to 3.5 cm (matching GearMesh).
         # The franka_gelsight fingertip is thicker than the stock Franka fingertip,
         # so 1.5 cm clearance above the bolt tip puts the gelsight tip inside / below
