@@ -674,7 +674,11 @@ class ForgeEnv(FactoryEnv):
         if cam_frames:
             cam_path = os.path.join(self._tactile_save_dir, f"{base_fname}_camera.npy")
             cam_tensor = np.stack(cam_frames, axis=0).astype(np.uint8, copy=False)
-            np.save(cam_path, cam_tensor)
+            cam_payload = {
+                "Camera": cam_tensor,
+                "Success": int(success),
+            }
+            np.save(cam_path, cam_payload, allow_pickle=True)
             cam_frames.clear()
 
         self._tactile_saved_episode_count += 1
@@ -1216,6 +1220,19 @@ class ForgeEnv(FactoryEnv):
                     )
 
     def close(self):
-        """Flush any buffered tactile episode before tearing down the environment."""
-        self._flush_tactile_episode()
+        """Flush any buffered tactile / camera episode before tearing down."""
+        if self._save_any_trajectory:
+            if self._save_tactile_all_envs:
+                # Multi-env mode: complete episodes were already flushed at
+                # each env's reset boundary. The remaining per-env buffers hold
+                # *partial* episodes that didn't end before the rollout cap —
+                # writing them at shutdown produces truncated trajectories that
+                # pollute the dataset (and worse, lumped together via np.stack
+                # they easily exceed pickle's 4 GiB protocol-3 limit). Drop them.
+                pass
+            else:
+                success = (
+                    int(self.ep_succeeded[0].item()) if hasattr(self, "ep_succeeded") else 0
+                )
+                self._flush_tactile_episode(success=success)
         super().close()

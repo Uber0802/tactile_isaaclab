@@ -3,6 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+import os
+
 from isaaclab.utils import configclass
 
 from isaaclab_tasks.direct.factory.factory_env_cfg import OBS_DIM_CFG, STATE_DIM_CFG
@@ -99,6 +101,16 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         # that closing the gripper friction-grips it instead of pushing the
         # weightless gear out of the fingers.
         self.task.held_asset.spawn.rigid_props.disable_gravity = False
+
+        # Curriculum-rollout compat: old gear ckpts (May 10 baselineA series)
+        # were trained with obs_dim=37, before `yaw_diff_to_fixed` (2-dim
+        # sin/cos) was added. Setting FORGE_DISABLE_YAW_DIFF_OBS=1 strips the
+        # new feature from obs/state so the old ckpts can be re-loaded for
+        # rollout. New training runs (with yaw_diff in obs) leave the env var
+        # unset and keep the 39-dim layout.
+        if os.environ.get("FORGE_DISABLE_YAW_DIFF_OBS", "0") == "1":
+            self.obs_order = [o for o in self.obs_order if o != "yaw_diff_to_fixed"]
+            self.state_order = [s for s in self.state_order if s != "yaw_diff_to_fixed"]
 
         # Gear-only PhysX bump: support 4096-env speed runs. Default factory
         # cfg uses 2**29 (~0.5 GB) collision stack which PhysX overflows at
