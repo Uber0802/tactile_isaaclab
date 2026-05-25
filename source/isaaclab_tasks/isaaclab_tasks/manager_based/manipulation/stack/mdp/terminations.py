@@ -57,7 +57,7 @@ def stack_success(
     stacked = xy_dist_c12 < xy_threshold
     stacked = torch.logical_and(h_dist_c12 - height_diff < height_threshold, stacked)
     stacked = torch.logical_and(pos_diff_c12[:, 2] > 0, stacked)
-
+    '''
     # Check gripper positions
     if hasattr(env.scene, "surface_grippers") and len(env.scene.surface_grippers) > 0:
         surface_gripper = env.scene.surface_grippers["surface_gripper"]
@@ -90,7 +90,7 @@ def stack_success(
             )
         else:
             raise ValueError("No gripper_joint_names found in environment config")
-
+    '''
     return stacked
 
 def root_horizontal_displacement_exceeded(

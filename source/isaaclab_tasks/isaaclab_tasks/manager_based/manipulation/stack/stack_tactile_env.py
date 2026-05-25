@@ -39,14 +39,13 @@ class StackTactileEnv(ManagerBasedRLEnv):
         super().__init__(cfg, render_mode, **kwargs)
 
         # Set friction on stack_object at runtime (UsdFileCfg does not support physics_material)
-        if "stack_object" in self.scene.keys():
+        if hasattr(self.cfg, 'set_friction') and "stack_object" in self.scene.keys():
             materials = self.scene["stack_object"].root_physx_view.get_material_properties()
-            materials[..., 0] = 0.8  # static friction
-            materials[..., 1] = 1.0  # dynamic friction
+            materials[..., 0] = 1.0  # static friction
+            materials[..., 1] = 1.2 # dynamic friction
             materials[..., 2] = 0.0  # restitution
             env_ids = torch.arange(self.num_envs, device="cpu")
             self.scene["stack_object"].root_physx_view.set_material_properties(materials, env_ids)
-
         # Success tracking
         self.ep_succeeded = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self.pending_episode_successes = torch.ones(self.num_envs, dtype=torch.long, device=self.device) * -1

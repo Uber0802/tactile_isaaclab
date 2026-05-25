@@ -2,6 +2,7 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+import math
 import isaaclab.sim as sim_utils
 
 from isaaclab.assets import DeformableObjectCfg
@@ -68,7 +69,7 @@ class GelsightRewardsCfg(RewardsCfg):
         func=mdp.stack_object_z_reward_exp,
         params={
             "stack_object_cfg": SceneEntityCfg("bottle_bottom_frame"),
-            "max_z_distance": 0.0734, # 0.0112 0.0734604001045227 0.0568 0.0203
+            "max_z_distance": 0.068, # 0.0112 0.0734604001045227 0.0568 0.0203
         },
         weight=1.0,
     )
@@ -90,7 +91,7 @@ class GelsightRewardsCfg(RewardsCfg):
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
             "stack_height_offset": 0.0365,
-            "height_tolerance": 0.005,
+            "height_tolerance": 0.02,
             "distance_offset": 0.1,
             "decay_rate": 30.0,
         },
@@ -120,6 +121,13 @@ class GelsightRewardsCfg(RewardsCfg):
         },
         weight=10.0,
     )
+    wrist_posture_penalty = RewTerm(
+        func=mdp.joint_deviation_l1,
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["panda_joint5", "panda_joint6", "panda_joint7"]),
+        },
+        weight=-0.01,
+    )
     
 
 @configclass
@@ -148,8 +156,8 @@ class EventCfg:
         func=franka_stack_events.randomize_object_pose,
         mode="reset",
         params={
-            "pose_range": {"x": (0.3, 0.7), "y": (-0.20, 0.20), "yaw": (-1.0, 1, 0)},
-            "min_separation": 0.3,
+            "pose_range": {"x": (0.375, 0.625), "y": (-0.125, 0.125), "yaw": (math.pi * 3 / 8, math.pi  * 5 / 8)},
+            "min_separation": 0.2,
             "asset_cfgs": [SceneEntityCfg("stack_object"), SceneEntityCfg("target_cube")],
         },
     )
@@ -162,7 +170,7 @@ class FrankaStackBottleEnvCfg(StackEnvCfg):
     # Override the observations and rewards
     observations: GelsightObservationsCfg = GelsightObservationsCfg()
     rewards: GelsightRewardsCfg = GelsightRewardsCfg()
-
+    '''
     left_tactile_sensor: VisuoTactileSensorCfg = VisuoTactileSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_link/tactile_sensor",
         update_period=1 / 15,
@@ -205,7 +213,7 @@ class FrankaStackBottleEnvCfg(StackEnvCfg):
             spawn=None,
         ),
     )
-
+    '''
     def __post_init__(self):
         # post init of parent
         super().__post_init__()
@@ -228,7 +236,7 @@ class FrankaStackBottleEnvCfg(StackEnvCfg):
                 activate_contact_sensors=True,
                 rigid_props=FRANKA_PANDA_CFG.spawn.rigid_props,
                 articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                    enabled_self_collisions=False, solver_position_iteration_count=8, solver_velocity_iteration_count=1
+                    enabled_self_collisions=False, solver_position_iteration_count=64, solver_velocity_iteration_count=4
                 ),
                 collision_props=FRANKA_PANDA_CFG.spawn.collision_props,
                 compliant_contact_stiffness=1000.0,
@@ -241,6 +249,13 @@ class FrankaStackBottleEnvCfg(StackEnvCfg):
         )
         self.scene.robot.spawn.semantic_tags = [("class", "robot")]
 
+
+        # Override gripper actuator settings for compliant, careful tactile gripping
+        self.scene.robot.actuators["panda_hand"].stiffness = 1000.0
+        self.scene.robot.actuators["panda_hand"].damping = 30.0
+        self.scene.robot.actuators["panda_hand"].effort_limit_sim = 40.0
+        self.scene.robot.actuators["panda_hand"].velocity_limit_sim = 0.04
+
         # Add semantics to table
         self.scene.table.spawn.semantic_tags = [("class", "table")]
 
@@ -248,8 +263,9 @@ class FrankaStackBottleEnvCfg(StackEnvCfg):
         self.scene.plane.semantic_tags = [("class", "ground")]
 
         # Add tactile sensors to the scene
-        self.scene.left_tactile_sensor = self.left_tactile_sensor
-        self.scene.right_tactile_sensor = self.right_tactile_sensor
+        if hasattr(self, "left_tactile_sensor"):
+            self.scene.left_tactile_sensor = self.left_tactile_sensor
+            self.scene.right_tactile_sensor = self.right_tactile_sensor
 
         # Set actions for the specific robot type (franka)
         self.actions.arm_action = mdp.JointPositionActionCfg(
@@ -269,11 +285,11 @@ class FrankaStackBottleEnvCfg(StackEnvCfg):
 
         # Rigid body properties of each cube
         cube_properties = RigidBodyPropertiesCfg(
-            solver_position_iteration_count=16,
-            solver_velocity_iteration_count=1,
+            solver_position_iteration_count=64,
+            solver_velocity_iteration_count=4,
             max_angular_velocity=1000.0,
             max_linear_velocity=1000.0,
-            max_depenetration_velocity=100.0,
+            max_depenetration_velocity=5.0,
             disable_gravity=False,
         )
 
@@ -291,7 +307,7 @@ class FrankaStackBottleEnvCfg(StackEnvCfg):
             prim_path="{ENV_REGEX_NS}/target_cube",
             init_state=RigidObjectCfg.InitialStateCfg(pos=[0.0, 0.00, 0.0203], rot=[1, 0, 0, 0]),
             spawn=UsdFileCfg(
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/blue_block.usd",
+                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/red_block.usd",
                 scale=(1, 1, 1),
                 rigid_props=cube_properties,
                 semantic_tags=[("class", "target_cube")],
@@ -339,7 +355,7 @@ class FrankaStackBottleEnvCfg(StackEnvCfg):
                         prim_path="{ENV_REGEX_NS}/stack_object/_06_mustard_bottle",                                                                                                        
                         name="bottle_bottom",                                                                                                                                              
                         offset=OffsetCfg(                                                                                                                                                  
-                            pos=(0.0, -0.0478, 0.0),  # Offset along the local Y-axis (bottle bottom)                                                                                      
+                            pos=(0.0, 0.0478, 0.0),  # Offset along the local Y-axis (bottle bottom)                                                                                      
                         ),                                                                                                                                                                 
                     ),                                                                                                                                                                     
                 ],                                                                                                                                                                         

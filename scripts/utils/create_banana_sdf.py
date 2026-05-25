@@ -28,13 +28,13 @@ parser.add_argument(
 parser.add_argument(
     "--target-scale",
     type=float,
-    default=1.0,
+    default=0.75,
     help="Uniform scale to bake into the mesh.",
 )
 parser.add_argument(
     "--mass",
     type=float,
-    default=None,
+    default=0.02,
     help="Mass to set on the rigid body in kg. If not specified, defaults to 0.05 scaled by target_scale^3 (physically-accurate volume scaling).",
 )
 
@@ -54,6 +54,7 @@ from pxr import (
     Usd,
     UsdGeom,
     UsdPhysics,
+    UsdShade,
     Vt,
 )
 
@@ -117,14 +118,31 @@ def _apply_sdf_collision(mesh_prim: Usd.Prim, sdf_resolution: int):
 
     sdf_api = PhysxSchema.PhysxSDFMeshCollisionAPI.Apply(mesh_prim)
     sdf_api.CreateSdfResolutionAttr(sdf_resolution)
-    sdf_api.CreateSdfMarginAttr(0.002)
-    sdf_api.CreateSdfNarrowBandThicknessAttr(0.005)
+    sdf_api.CreateSdfMarginAttr(0.001)
+    sdf_api.CreateSdfNarrowBandThicknessAttr(0.002)
     sdf_api.CreateSdfSubgridResolutionAttr(6)
 
     physx_collision = PhysxSchema.PhysxCollisionAPI.Apply(mesh_prim)
-    physx_collision.CreateContactOffsetAttr(0.005)
+    physx_collision.CreateContactOffsetAttr(0.002)
     physx_collision.CreateRestOffsetAttr(0.0)
     physx_collision.CreateMinTorsionalPatchRadiusAttr(0.005)
+
+    # Create and bind high-friction physics material
+    stage = mesh_prim.GetStage()
+    material_path = mesh_prim.GetPath().AppendChild("physicsMaterial")
+    material = UsdShade.Material.Define(stage, material_path)
+    
+    physics_material_api = UsdPhysics.MaterialAPI.Apply(material.GetPrim())
+    physics_material_api.CreateStaticFrictionAttr(1.0)
+    physics_material_api.CreateDynamicFrictionAttr(1.0)
+    physics_material_api.CreateRestitutionAttr(0.0)
+    
+    physx_material_api = PhysxSchema.PhysxMaterialAPI.Apply(material.GetPrim())
+    physx_material_api.CreateFrictionCombineModeAttr("max")
+    physx_material_api.CreateRestitutionCombineModeAttr("average")
+    
+    material_binding_api = UsdShade.MaterialBindingAPI.Apply(mesh_prim)
+    material_binding_api.Bind(material, bindingStrength=UsdShade.Tokens.weakerThanDescendants, materialPurpose="physics")
 
 def main():
     # 011 Banana

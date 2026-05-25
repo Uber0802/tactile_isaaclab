@@ -13,6 +13,7 @@ import isaaclab.utils.math as math_utils
 from isaaclab.assets import Articulation, RigidObject
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.manager_based.manipulation.stack.stack_box.stack_box_env_cfg import FrankaStackBoxEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.stack_bottle.stack_bottle_env_cfg import FrankaStackBottleEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_peg.stack_peg_env_cfg import FrankaStackPegEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_lamp_bulb.stack_lamp_bulb_env_cfg import FrankaStackLampBulbEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_lighter.stack_lighter_env_cfg import FrankaStackLighterEnvCfg
@@ -219,7 +220,7 @@ def main():
     print(f"  pos_sensitivity: {pos_sensitivity}")
     print(f"  rot_sensitivity: {rot_sensitivity}")
     
-    env_cfg = FrankaStackLighterEnvCfg()
+    env_cfg = FrankaStackBananaEnvCfg()
     env_cfg.scene.num_envs = 1
     env_cfg.episode_length_s = 1000.0 # Extend episode length to 1000 seconds for manual debugging
     
@@ -257,7 +258,7 @@ def main():
         use_default_offset=False,
     )
     
-    env = gym.make("Isaac-Stack-Lighter-Franka-Gelsight-v0", cfg=env_cfg)
+    env = gym.make("Isaac-Stack-Bottle-Franka-Gelsight-v0", cfg=env_cfg)
     
     run_manual_test(
         env,

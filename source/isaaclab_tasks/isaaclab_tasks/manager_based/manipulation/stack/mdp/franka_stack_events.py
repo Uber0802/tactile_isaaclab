@@ -164,7 +164,7 @@ def randomize_object_pose(
     asset_cfgs: list[SceneEntityCfg],
     min_separation: float = 0.0,
     pose_range: dict[str, tuple[float, float]] = {},
-    max_sample_tries: int = 5000,
+    max_sample_tries: int = 10000,
 ):
     if env_ids is None:
         return
