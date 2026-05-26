@@ -245,7 +245,7 @@ class StackTactileEnv(ManagerBasedRLEnv):
         l_full = torch.cat([l_normal, l_shear], dim=-1)
         r_full = torch.cat([r_normal, r_shear], dim=-1)
         full = torch.cat([l_full, r_full], dim=1).float()
-        current = full[..., list(self._tactile_shear_channels)]
+        current = full[..., list(self._tactile_shear_channels)].detach()
 
         H = self._tactile_history_length
         T = self._tactile_model_max_length
@@ -536,6 +536,11 @@ class StackTactileEnv(ManagerBasedRLEnv):
         
         self.ep_succeeded[env_ids] = False
 
+        return obs, info
+
+    def _reset_idx(self, env_ids: Sequence[int]):
+        super()._reset_idx(env_ids)
+        
         # Clear tactile reward buffer and step counts for resetting envs.
         if getattr(self, "_tactile_reward_enabled", False):
             # Save curve when target env resets
@@ -547,8 +552,6 @@ class StackTactileEnv(ManagerBasedRLEnv):
             self._tactile_buffer[env_ids] = 0.0
             self._tactile_step_count[env_ids] = 0
             self._tactile_smoothed_progress[env_ids] = 0.0
-
-        return obs, info
 
     def close(self):
         if self._save_tactile_force_field:
