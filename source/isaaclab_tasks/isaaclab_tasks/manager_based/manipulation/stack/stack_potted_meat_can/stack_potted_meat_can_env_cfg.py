@@ -205,6 +205,8 @@ class FrankaStackPottedMeatCanEnvCfg(StackEnvCfg):
         # Set events
         self.events = EventCfg()
 
+        self.set_friction = True
+
         # Set Franka as robot
         self.scene.robot = FRANKA_PANDA_CFG.replace(
             prim_path="{ENV_REGEX_NS}/Robot",
