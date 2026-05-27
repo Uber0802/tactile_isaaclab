@@ -224,6 +224,7 @@ class FrankaStackBottleEnvCfg(StackEnvCfg):
         # simulation settings
         self.sim.dt = 0.005  # 100Hz
         self.sim.render_interval = 10
+        self.set_friction = True
 
         # Set events
         self.events = EventCfg()

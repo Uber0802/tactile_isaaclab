@@ -157,6 +157,61 @@ def sample_object_poses(
 
     return pose_list
 
+def randomize_object_pose_use_rot(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    asset_cfgs: list[SceneEntityCfg],
+    min_separation: float = 0.0,
+    pose_range: dict[str, tuple[float, float]] = {},
+    max_sample_tries: int = 10000,
+):
+    if env_ids is None:
+        return
+
+    # Randomize poses in each environment independently
+    for cur_env in env_ids.tolist():
+        pose_list = sample_object_poses(
+            num_objects=len(asset_cfgs),
+            min_separation=min_separation,
+            pose_range=pose_range,
+            max_sample_tries=max_sample_tries,
+        )
+
+        # Randomize pose for each object
+        for i in range(len(asset_cfgs)):
+            asset_cfg = asset_cfgs[i]
+            asset = env.scene[asset_cfg.name]
+
+            # Write pose to simulation
+            pose_tensor = torch.tensor([pose_list[i]], device=env.device)
+            if "z" not in pose_range:
+                pose_tensor[:, 2] = asset.data.default_root_state[cur_env, 2]
+                
+            positions = pose_tensor[:, 0:3] + env.scene.env_origins[cur_env, 0:3]
+            
+            # Combine the default configuration rotation with the sampled yaw to preserve standing orientations
+            if hasattr(asset.cfg, "init_state") and hasattr(asset.cfg.init_state, "rot"):
+                default_rot = torch.tensor(asset.cfg.init_state.rot, device=env.device)
+            else:
+                default_rot = torch.tensor([1.0, 0.0, 0.0, 0.0], device=env.device)
+                
+            yaw_quat = math_utils.quat_from_euler_xyz(
+                torch.zeros(1, device=env.device),
+                torch.zeros(1, device=env.device),
+                pose_tensor[:, 5]
+            )
+            orientations = math_utils.quat_mul(yaw_quat, default_rot.unsqueeze(0))
+            
+            # Update the default root state so displacement-based rewards/terminations use the new randomized position
+            asset.data.default_root_state[cur_env, 0:3] = pose_tensor[0, 0:3]
+            asset.data.default_root_state[cur_env, 3:7] = orientations[0]
+
+            asset.write_root_pose_to_sim(
+                torch.cat([positions, orientations], dim=-1), env_ids=torch.tensor([cur_env], device=env.device)
+            )
+            asset.write_root_velocity_to_sim(
+                torch.zeros(1, 6, device=env.device), env_ids=torch.tensor([cur_env], device=env.device)
+            )
 
 def randomize_object_pose(
     env: ManagerBasedEnv,

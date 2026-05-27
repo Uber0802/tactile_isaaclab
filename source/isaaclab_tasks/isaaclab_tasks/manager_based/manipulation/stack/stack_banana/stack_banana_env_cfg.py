@@ -223,8 +223,6 @@ class FrankaStackBananaEnvCfg(StackEnvCfg):
         # Set events
         self.events = EventCfg()
 
-        self.set_friction = True
-
         # Set Franka as robot
         self.scene.robot = FRANKA_PANDA_CFG.replace(
             prim_path="{ENV_REGEX_NS}/Robot",
@@ -249,7 +247,7 @@ class FrankaStackBananaEnvCfg(StackEnvCfg):
         # Override gripper actuator settings for compliant, careful tactile gripping
         self.scene.robot.actuators["panda_hand"].stiffness = 1000.0
         self.scene.robot.actuators["panda_hand"].damping = 30.0
-        self.scene.robot.actuators["panda_hand"].effort_limit_sim = 40.0
+        self.scene.robot.actuators["panda_hand"].effort_limit_sim = 80.0
         self.scene.robot.actuators["panda_hand"].velocity_limit_sim = 0.04
 
         # Add semantics to table

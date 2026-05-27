@@ -51,7 +51,7 @@ params:
   load_path: '' # path to the checkpoint to load
 
   config:
-    name: franka_stack_lamp_bulb
+    name: franka_stack_potted_meat_can
     env_name: rlgpu
     device: 'cuda:0'
     device_name: 'cuda:0'

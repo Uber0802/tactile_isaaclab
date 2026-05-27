@@ -22,8 +22,7 @@ CKPTS=(
 )
 
 
-# Episodes to collect per env. The env will sys.exit(0) once all envs hit this
-# quota, so ITERS_PER_CKPT just needs to be a generous upper bound.
+# ITERS_PER_CKPT = EPISODES_PER_ENV * 2 ensures each env completes at least EPISODES_PER_ENV episodes per checkpoint
 EPISODES_PER_ENV=5
 ITERS_PER_CKPT=10
 
@@ -49,9 +48,10 @@ for ckpt_name in "${CKPTS[@]}"; do
     FORGE_FIXED_OBJECT_POS=1 \
     FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
     FORGE_SAVE_TACTILE_ALL_ENVS=1 \
+    FORGE_ENABLE_FRONT_CAM=1 \
     FORGE_TACTILE_SAVE_DIR="$save_dir" \
     FORGE_TACTILE_EPISODES_PER_ENV=$EPISODES_PER_ENV \
-    FORGE_TACTILE_REWARD_INSTRUCTION="grasp a box and stack it on another box" \
+    FORGE_TACTILE_REWARD_INSTRUCTION="grasp the blue box and stack it on the red box" \
     ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
         --task Isaac-Stack-Cube-Franka-Gelsight-v0 \
         --checkpoint "$ckpt_path" \
