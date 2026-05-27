@@ -98,6 +98,9 @@ class ForgeTaskPegInsertPickPlaceCfg(ForgeTaskPegInsertCfg):
         if baseline == "A_hard_success":
             self._apply_baseline_A_hard_success()
             return
+        if baseline == "A_naive":
+            self._apply_baseline_A_naive()
+            return
         if baseline == "B":
             self._apply_baseline_B()
             return
@@ -178,6 +181,27 @@ class ForgeTaskPegInsertPickPlaceCfg(ForgeTaskPegInsertCfg):
         self.task.z_align_reward_scale = 0.0
         # Tighter success: peg must reach the hole bottom (no above-target slack).
         self.task.success_threshold = 0.0
+
+    def _apply_baseline_A_naive(self) -> None:
+        """A_naive: kill ALL peg-specific dense shaping — leave only the
+        factory base (kp_baseline/coarse/fine, action penalties, curr_engaged,
+        curr_success) so the only "learn-the-task" signal comes from the
+        sparse `curr_success` (and curr_engaged) bonus. Designed as the
+        backdrop for adding ONE external reward (e.g. visual reward shaping
+        via FORGE_VISUAL_REWARD_CKPT) and isolating its contribution — none
+        of the peg-specific hand-crafted shaping interferes.
+
+        What stays on (factory_env._get_rewards):
+          - kp_baseline / kp_coarse / kp_fine   (× 0.1)
+          - action_penalty_ee / action_grad_penalty
+          - curr_engaged                        (× 1.0)
+          - curr_success                        (× 50.0)
+        """
+        self.task.approach_reward_scale = 0.0
+        self.task.lift_reward_scale = 0.0
+        self.task.xy_align_reward_scale = 0.0
+        self.task.z_align_reward_scale = 0.0
+        self.task.descent_reward_scale = 0.0
 
     def _apply_baseline_single_pos(self) -> None:
         """Single-position baseline: identical to A in obs/state, but every

@@ -27,4 +27,6 @@ FORGE_SKIP_TACTILE_SENSORS=1 \
     --wandb-project-name tactile-rewind \
     --wandb-name GearMesh_PickPlace_baselineA_hard_success_yaw01_yawinput \
     agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineA_hard_success_yaw01_yawinput \
-    agent.params.config.save_frequency=20
+    agent.params.config.save_frequency=20 \
+    agent.params.config.entropy_coef=0.02 \
+    agent.params.network.space.continuous.sigma_init.val=0.5

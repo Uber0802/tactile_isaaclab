@@ -79,3 +79,4 @@ assets/
 .antigravitycli/
 *.pth
 *.png
+**/peg_plot/*

@@ -13,7 +13,7 @@ CACHE_DIR="/tmp/${USER}_${HOSTNAME%%.*}_isaac"
 mkdir -p "$CACHE_DIR/tmp" "$CACHE_DIR/cache/ov" "$CACHE_DIR/torch/triton" "$CACHE_DIR/torch/inductor"
 
 CKPTS_DIR=/mnt/home/tactile/tactile_isaaclab/logs/rl_games/ForgePickPlace/PegInsert_PickPlace_baselineA_legacy/nn
-BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/pegpickplace_curriculum_rgb
+BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/pegpickplace_curriculum_rgb_multipos
 
 # Explicit ep list picked across the r4tddjlv (2026-05-22 ~ 05-24) skill curve:
 #   ep_100..1000  = pre-crack (0% success)
@@ -71,12 +71,13 @@ for ckpt_name in "${CKPTS[@]}"; do
     FORGE_SAVE_TACTILE_ALL_ENVS=1 \
     FORGE_SAVE_CAMERA=1 \
     FORGE_ENABLE_FRONT_CAM=1 \
+    FORGE_TACTILE_EPISODES_PER_ENV=1 \
     FORGE_TACTILE_SAVE_DIR="$save_dir" \
     ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
         --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
-        --baseline single_pos \
+        --baseline A_legacy \
         --checkpoint "$ckpt_path" \
-        --num_envs 128 \
+        --num_envs 64 \
         --max_iterations $max_iters_abs \
         --sigma $SIGMA \
         --headless \

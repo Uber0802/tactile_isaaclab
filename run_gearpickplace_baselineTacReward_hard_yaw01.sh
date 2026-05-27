@@ -31,6 +31,6 @@ FORGE_TACTILE_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-part
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name GearMesh_PickPlace_baselineTacReward_hard_success_yaw01_0.3 \
-    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineTacReward_hard_success_yaw01_0.3 \
+    --wandb-name GearMesh_PickPlace_baselineTacReward_hard_success_yaw01_0.3_new \
+    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineTacReward_hard_success_yaw01_0.3_new \
     agent.params.config.save_frequency=20

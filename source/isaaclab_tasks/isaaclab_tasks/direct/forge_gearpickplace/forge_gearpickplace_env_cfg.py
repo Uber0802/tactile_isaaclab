@@ -183,21 +183,22 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         teeth to physically mesh, so `r_yaw` becomes pure reward-hack fuel
         (xy_coarse * yaw_match without contributing to success).
 
-        Tightening `success_threshold = -0.3` requires the gear to descend by
-        `0.3 × shaft_height = 15mm` below target z — partial teeth engagement.
-        This is loose enough that approximate yaw alignment (not perfect) can
-        still let the gear descend, but tight enough that the policy actually
-        needs to learn meshing rather than floating above. Previous setting
-        of -1.0 (full insertion, 50mm) proved too hard — all three runs
-        (baselineA / TacReward 0.1 / TacReward 0.3) plateaued at 0% success
-        after ~12 hours because no yaw_reward + impossible success = no
-        learning signal at all.
+        2026-05-27: relaxed `success_threshold` from -0.3 (15mm deep) to -0.1
+        (5mm deep). The earlier -0.3 was *too* strict — runs plateaued at 0%
+        for 25+ hours with the policy stably hovering at gear_z=+9 mm while
+        every other reward saturated. 5mm depth ≈ first tooth engagement,
+        still requires real meshing (so yaw must align ~within tooth pitch)
+        but reachable from the hover plateau with the depth/curr_success
+        shaping in place. History:
+          - `-1.0` (full 50 mm): all 3 runs plateau 0% × 12h
+          - `-0.3` (15 mm):    25+ h still 0%, hover-trap
+          - `-0.1` (5 mm):     new target — first-tooth-mesh
+          - `+0.05`:           original "barely touching", trivial
         """
         # Reuse A_hard ablations (yaw_reward = 0).
         self._apply_baseline_A_hard()
-        # Tighter success: ~30% shaft depth (15mm below target z), requires
-        # meaningful teeth engagement but not full seating.
-        self.task.success_threshold = -0.3
+        # 5 mm below target z (~10% of shaft) — first-tooth mesh.
+        self.task.success_threshold = -0.1
         # Fix yaw randomization to match the tactile-reward-model training
         # distribution. The curriculum dataset was collected with `single_pos`
         # (gear_table_yaw_range = 0, fixed_asset_init_orn_range_deg = 0), so
@@ -229,9 +230,12 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         """
         # Reuse all A_hard_success ablations (yaw=0, success=-0.3, yaw fixed).
         self._apply_baseline_A_hard_success()
-        # Wider yaw gate + full-strength reward so policy has gradient even at
-        # the 30-40° drift induced by gripper twist during pickup.
-        self.task.yaw_reward_scale = 1.0
+        # Wider yaw gate at moderate strength so policy has gradient even at
+        # the 30-40° drift induced by gripper twist during pickup, without
+        # making yaw the dominant dense reward (which created a "hover above
+        # bolt with yaw locked" local optimum). 2026-05-26: 1.0 → 0.3 to leave
+        # room for the new dense depth reward to dominate "press down" budget.
+        self.task.yaw_reward_scale = 0.3
         self.task.yaw_alignment_scale = 0.5
 
     def _apply_baseline_single_pos(self) -> None:
