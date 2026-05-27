@@ -133,6 +133,12 @@ class ForgeEnv(FactoryEnv):
         self._tactile_max_buffer_frames = int(os.getenv("FORGE_TACTILE_MAX_BUFFER_FRAMES", "500000"))
         self._tactile_saved_episode_count = 0
         self._tactile_step_in_episode = 0
+        # Per-env episode quota. 0 = unlimited (default). When > 0, each env
+        # stops appending to its buffer once it has saved this many complete
+        # episodes — useful for curriculum rollout where you want exactly
+        # `num_envs * quota` trajectories per ckpt regardless of iter count.
+        self._tactile_episodes_per_env = int(os.getenv("FORGE_TACTILE_EPISODES_PER_ENV", "0"))
+        self._tactile_saved_per_env = [0] * self.num_envs
 
         # If FORGE_SKIP_TACTILE_SENSORS=1 took the GelSight sensors out, tactile
         # data collection has nothing to read — silently downgrade the tactile
@@ -170,6 +176,12 @@ class ForgeEnv(FactoryEnv):
 
         # Optional Tactile-ReWiND progress reward.
         self._init_tactile_reward()
+
+        # Optional ReWiND visual reward (RGB → DINOv2 → ReWiNDTransformer).
+        # Mirrors the tactile reward but reads the front_cam sensor. Activated
+        # by FORGE_VISUAL_REWARD_CKPT; requires FORGE_ENABLE_FRONT_CAM=1 plus
+        # --enable_cameras. Opt-in — disabled runs see no overhead.
+        self._init_visual_reward()
 
         # Optional Tactile-ReWiND CNN encoder for Baseline B2 (frozen 768-dim
         # tactile embedding fed to the policy in place of the raw 3000-dim
@@ -334,6 +346,218 @@ class ForgeEnv(FactoryEnv):
               f"instruction={instruction!r}  history={self._tactile_history_length}  "
               f"normalize={self._tactile_normalize_mode}  "
               f"smooth_alpha={self._tactile_reward_smooth_alpha}{curve_log_msg}")
+
+    def _init_visual_reward(self):
+        """Optional dense reward bonus from a ReWiND visual model ckpt.
+
+        Mirrors `_init_tactile_reward` but reads RGB from the `front_cam`
+        sensor and runs frames through DINOv2 + ReWiNDTransformer.
+
+        Activated when env var FORGE_VISUAL_REWARD_CKPT points at a .pth.
+        Requires FORGE_ENABLE_FRONT_CAM=1 + --enable_cameras for the camera
+        to actually be in the scene.
+
+        Knobs:
+            FORGE_VISUAL_REWARD_CKPT         (str path; empty = disabled)
+            FORGE_VISUAL_REWARD_SCALE        (float, default 1.0)
+            FORGE_VISUAL_REWARD_INSTRUCTION  (default task-specific)
+            FORGE_VISUAL_REWARD_ROOT         (path to ReWiND repo; sys.path
+                                              prepended so `from model import
+                                              ReWiNDTransformer` resolves)
+            FORGE_VISUAL_REWARD_HISTORY      (int, default = max_episode_length)
+            FORGE_VISUAL_REWARD_SMOOTH_ALPHA (float, default 1.0 = no EMA)
+            FORGE_VISUAL_REWARD_BACKBONE     (default "dinov2_vitb14")
+            FORGE_VISUAL_REWARD_DINO_INTERVAL (int, default 1)
+                                              Run DINOv2 every N sim steps and
+                                              reuse features in between.
+                                              Set to 4-8 if DINOv2 is slow.
+        """
+        self._visual_reward_enabled = False
+        ckpt = os.getenv("FORGE_VISUAL_REWARD_CKPT", "").strip()
+        if not ckpt:
+            return
+        if "front_cam" not in self.scene.sensors:
+            print("[VisualReward] front_cam not attached — set FORGE_ENABLE_FRONT_CAM=1 "
+                  "and pass --enable_cameras to enable it. Visual reward DISABLED.")
+            return
+
+        # Load ReWiND's model.py by explicit path — DON'T just sys.path.insert
+        # + `from model import ...`, because Tactile-ReWiND ALSO ships a
+        # top-level `model.py`. If both reward heads are active the second
+        # `from model import ...` resolves to whichever module was imported
+        # first (cached in sys.modules), so we'd silently call the WRONG
+        # transformer class. importlib.util.spec_from_file_location avoids
+        # that by giving each visual model its own unique module name.
+        import importlib.util
+        rewind_root = os.path.expanduser(os.getenv("FORGE_VISUAL_REWARD_ROOT", "~/ReWiND"))
+        model_path = os.path.join(rewind_root, "model.py")
+        try:
+            spec = importlib.util.spec_from_file_location("rewind_visual_model", model_path)
+            mod = importlib.util.module_from_spec(spec)
+            # Make `from training.X import Y` style imports inside model.py
+            # still resolve — push rewind_root onto sys.path for the local
+            # module-load scope. We can't avoid this if model.py has its own
+            # imports relative to its repo root.
+            if rewind_root not in sys.path:
+                sys.path.insert(0, rewind_root)
+            spec.loader.exec_module(mod)
+            ReWiNDTransformer = mod.ReWiNDTransformer
+        except Exception as e:
+            print(f"[VisualReward] FAILED loading ReWiNDTransformer from {model_path}: {e}")
+            return
+
+        # Load DINOv2 backbone (frozen).
+        backbone_name = os.getenv("FORGE_VISUAL_REWARD_BACKBONE", "dinov2_vitb14")
+        try:
+            backbone = torch.hub.load("facebookresearch/dinov2", backbone_name)
+        except Exception as e:
+            print(f"[VisualReward] FAILED loading backbone {backbone_name}: {e}")
+            return
+        backbone = backbone.to(self.device).eval()
+        for p in backbone.parameters():
+            p.requires_grad = False
+        self._visual_backbone = backbone
+
+        # Load ReWiND model.
+        state = torch.load(ckpt, map_location=self.device, weights_only=False)
+        cfg = state.get("args", None)
+        max_length = getattr(cfg, "max_length", 16) if cfg is not None else 16
+        self._visual_model = ReWiNDTransformer(
+            args=cfg, video_dim=768, text_dim=384, hidden_dim=512,
+        ).to(self.device).eval()
+        self._visual_model.load_state_dict(state["model_state_dict"])
+        for p in self._visual_model.parameters():
+            p.requires_grad = False
+        self._visual_max_length = max_length
+
+        # Encode instruction via MiniLM (same as tactile reward).
+        instruction = os.getenv(
+            "FORGE_VISUAL_REWARD_INSTRUCTION",
+            "pick the peg and insert it into the hole",
+        )
+        from transformers import AutoTokenizer, AutoModel
+        tok = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L12-v2")
+        minilm = AutoModel.from_pretrained(
+            "sentence-transformers/all-MiniLM-L12-v2"
+        ).to(self.device).eval()
+        with torch.no_grad():
+            enc = tok([instruction], padding=True, return_tensors="pt").to(self.device)
+            out = minilm(**enc)
+            tok_emb = out[0]
+            mask = enc["attention_mask"].unsqueeze(-1).expand(tok_emb.size()).float()
+            text_emb = (tok_emb * mask).sum(1) / mask.sum(1).clamp(min=1e-9)
+            # ReWiND training applied L2 normalize; match it.
+            text_emb = torch.nn.functional.normalize(text_emb, p=2, dim=1)
+        del minilm, tok
+        self._visual_text_emb = text_emb.float()
+
+        # ImageNet normalization for DINOv2.
+        self._dino_mean = torch.tensor([0.485, 0.456, 0.406],
+                                        device=self.device).view(1, 3, 1, 1)
+        self._dino_std = torch.tensor([0.229, 0.224, 0.225],
+                                       device=self.device).view(1, 3, 1, 1)
+
+        # Per-env feature buffer (B, H, 768).
+        default_history = int(getattr(self, "max_episode_length", 150))
+        env_history = os.getenv("FORGE_VISUAL_REWARD_HISTORY", "").strip()
+        self._visual_history_length = (
+            int(env_history) if env_history else default_history
+        )
+        if self._visual_history_length < max_length:
+            self._visual_history_length = max_length
+        self._visual_buffer = torch.zeros(
+            self.num_envs, self._visual_history_length, 768,
+            device=self.device, dtype=torch.float32,
+        )
+        self._visual_step_count = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.long,
+        )
+        self._visual_reward_scale = float(
+            os.getenv("FORGE_VISUAL_REWARD_SCALE", "1.0"))
+        self._visual_reward_smooth_alpha = float(
+            os.getenv("FORGE_VISUAL_REWARD_SMOOTH_ALPHA", "1.0"))
+        self._visual_smoothed_progress = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.float32,
+        )
+        self._visual_dino_interval = max(
+            1, int(os.getenv("FORGE_VISUAL_REWARD_DINO_INTERVAL", "1")))
+        self._visual_dino_step_counter = 0
+        self._visual_last_features = torch.zeros(
+            self.num_envs, 768, device=self.device, dtype=torch.float32,
+        )
+
+        self._visual_reward_enabled = True
+        print(f"[VisualReward] enabled  ckpt={ckpt}  scale={self._visual_reward_scale}  "
+              f"backbone={backbone_name}  instruction={instruction!r}  "
+              f"history={self._visual_history_length}  max_length={max_length}  "
+              f"smooth_alpha={self._visual_reward_smooth_alpha}  "
+              f"dino_interval={self._visual_dino_interval}")
+
+    def _compute_visual_reward(self) -> torch.Tensor:
+        """(num_envs,) predicted visual progress as a dense reward bonus."""
+        if not getattr(self, "_visual_reward_enabled", False):
+            return torch.zeros(self.num_envs, device=self.device)
+
+        # Get RGB (B, 224, 224, 3) uint8 from front_cam.
+        rgb_raw = self.scene.sensors["front_cam"].data.output["rgb"][..., :3]
+
+        # Run DINOv2 only every `dino_interval` steps to amortise cost.
+        self._visual_dino_step_counter += 1
+        if self._visual_dino_step_counter % self._visual_dino_interval == 0:
+            with torch.no_grad():
+                rgb = rgb_raw.permute(0, 3, 1, 2).float() / 255.0
+                rgb = (rgb - self._dino_mean) / self._dino_std
+                features = self._visual_backbone(rgb)        # (B, 768)
+            self._visual_last_features = features
+        else:
+            features = self._visual_last_features
+
+        # Push to rolling buffer.
+        H = self._visual_history_length
+        T = self._visual_max_length
+        self._visual_buffer = torch.roll(self._visual_buffer, shifts=-1, dims=1)
+        self._visual_buffer[:, -1] = features
+        self._visual_step_count = torch.clamp(self._visual_step_count + 1, max=H)
+        valid = self._visual_step_count.clamp(min=1)
+        start = (H - valid).long()
+
+        # Sample T frames per env (linspace stride, same rule as tactile).
+        device = self._visual_buffer.device
+        t_grid = torch.arange(T, device=device)
+        if T > 1:
+            frac = t_grid.float() / float(T - 1)
+        else:
+            frac = torch.zeros(T, device=device)
+        span = (H - 1 - start).float().unsqueeze(1)
+        long_idx = (start.float().unsqueeze(1)
+                    + span * frac.unsqueeze(0)).round().long()
+        long_idx.clamp_(0, H - 1)
+        short_idx = (start.unsqueeze(1)
+                     + torch.minimum(t_grid.unsqueeze(0),
+                                     (valid - 1).unsqueeze(1)))
+        short_idx.clamp_(0, H - 1)
+        is_long = (valid >= T).unsqueeze(1)
+        sel = torch.where(is_long, long_idx, short_idx)
+        gather_idx = sel[:, :, None].expand(-1, -1, 768)
+        slc = torch.gather(self._visual_buffer, 1, gather_idx)   # (B, T, 768)
+
+        text = self._visual_text_emb.expand(self.num_envs, -1)
+        with torch.no_grad():
+            progress = self._visual_model(slc, text)
+            if progress.ndim == 3:
+                progress = progress.squeeze(-1)
+        latest = progress[:, -1]
+
+        alpha = self._visual_reward_smooth_alpha
+        if alpha < 1.0:
+            self._visual_smoothed_progress = (
+                alpha * latest + (1.0 - alpha) * self._visual_smoothed_progress
+            )
+            out = self._visual_smoothed_progress
+        else:
+            self._visual_smoothed_progress = latest
+            out = latest
+        return out * self._visual_reward_scale
 
     def _compute_tactile_reward(self) -> torch.Tensor:
         """(num_envs,) predicted progress as a dense reward bonus.
@@ -682,6 +906,8 @@ class ForgeEnv(FactoryEnv):
             cam_frames.clear()
 
         self._tactile_saved_episode_count += 1
+        if env_id is not None:
+            self._tactile_saved_per_env[env_id] += 1
 
     def _save_env0_tactile_force_field(self):
         """Buffer target-env tactile / camera tensors and flush one .npy per episode."""
@@ -751,14 +977,29 @@ class ForgeEnv(FactoryEnv):
           3. Do one GPU→CPU transfer for the whole batch, then per-env append.
         """
         # 1) Episode-boundary flushes for any env that reset this step.
+        quota = self._tactile_episodes_per_env
         reset_envs = torch.nonzero(self.reset_buf, as_tuple=False).flatten().tolist()
         for env_id in reset_envs:
-            success = (
-                int(self.ep_succeeded[env_id].item())
-                if hasattr(self, "ep_succeeded") else 0
-            )
-            self._flush_tactile_episode(success=success, env_id=env_id)
+            if quota > 0 and self._tactile_saved_per_env[env_id] >= quota:
+                # Quota already met for this env — discard partial buffer
+                # without writing a file. Subsequent appends are also blocked
+                # in step 4 so disk usage stays at exactly quota * num_envs.
+                if self._save_tactile_force_field:
+                    self._tactile_episode_frames[env_id].clear()
+                if self._save_front_cam:
+                    self._camera_episode_frames[env_id].clear()
+            else:
+                success = (
+                    int(self.ep_succeeded[env_id].item())
+                    if hasattr(self, "ep_succeeded") else 0
+                )
+                self._flush_tactile_episode(success=success, env_id=env_id)
             self._tactile_step_in_episode_per_env[env_id] = 0
+
+        # Early exit when every env has met its quota — saves DINOv2 / sensor
+        # work for the remaining iterations of this rollout.
+        if quota > 0 and all(c >= quota for c in self._tactile_saved_per_env):
+            return
 
         # 2) Memory safety: total frames across both tactile + camera buffers.
         tactile_buf_len = (
@@ -811,8 +1052,11 @@ class ForgeEnv(FactoryEnv):
             )
 
         # 4) Per-env append, respecting save_interval against this env's
-        #    step-in-episode counter.
+        #    step-in-episode counter. Envs that already hit their per-env quota
+        #    skip appending (no point buffering frames that won't be saved).
         for env_id in range(self.num_envs):
+            if quota > 0 and self._tactile_saved_per_env[env_id] >= quota:
+                continue
             step = self._tactile_step_in_episode_per_env[env_id]
             if step % self._tactile_save_interval == 0:
                 if all_frames is not None:
@@ -1059,6 +1303,10 @@ class ForgeEnv(FactoryEnv):
             rew_dict["tactile_progress"] = self._compute_tactile_reward()
             # `_tactile_reward_scale` already baked in inside the helper.
             rew_scales["tactile_progress"] = 1.0
+        if getattr(self, "_visual_reward_enabled", False):
+            rew_dict["visual_progress"] = self._compute_visual_reward()
+            # `_visual_reward_scale` already baked in inside the helper.
+            rew_scales["visual_progress"] = 1.0
         for rew_name, rew in rew_dict.items():
             rew_buf += rew_dict[rew_name] * rew_scales[rew_name]
 
@@ -1151,6 +1399,12 @@ class ForgeEnv(FactoryEnv):
             # previous episode's tail value (which would bias the early-episode
             # reward upward).
             self._tactile_smoothed_progress[env_ids] = 0
+
+        if getattr(self, "_visual_reward_enabled", False):
+            self._visual_buffer[env_ids] = 0
+            self._visual_step_count[env_ids] = 0
+            self._visual_smoothed_progress[env_ids] = 0
+            self._visual_last_features[env_ids] = 0
 
     def _log_forge_metrics(self, rew_dict, policy_success_pred):
         """Log metrics to evaluate success prediction performance."""

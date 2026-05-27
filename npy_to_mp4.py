@@ -15,9 +15,21 @@ def main():
     ap.add_argument("--fps", type=int, default=15)
     args = ap.parse_args()
 
-    arr = np.load(args.input)
+    loaded = np.load(args.input, allow_pickle=True)
+    # Two formats supported:
+    #   - raw ndarray (T, H, W, 3) uint8   ← legacy
+    #   - dict with "Camera" key            ← new (includes "Success" too)
+    if isinstance(loaded, np.ndarray) and loaded.ndim == 4:
+        arr = loaded
+        success = None
+    else:
+        payload = loaded.item() if loaded.ndim == 0 else loaded
+        arr = payload["Camera"]
+        success = payload.get("Success")
     if arr.ndim != 4 or arr.shape[-1] != 3:
         raise SystemExit(f"Expected (T, H, W, 3) uint8, got {arr.shape} {arr.dtype}")
+    if success is not None:
+        print(f"  Success: {success}")
 
     out_path = args.output or os.path.splitext(args.input)[0] + ".mp4"
 

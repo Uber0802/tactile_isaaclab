@@ -398,11 +398,19 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         xy_sharp = torch.exp(-gear_to_target_xy / self.cfg_task.xy_align_sharp_scale)
         r_xy_align_sharp = r_lift * xy_sharp
 
+        # (5c) Strict XY gate matching the success-criterion xy threshold
+        # (2.5 mm). Sharp exponential — strong cutoff outside 2.5 mm but still
+        # differentiable. Used to gate r_z_descend / r_depth so the policy
+        # cannot accumulate z-progress reward while xy is off.
+        xy_strict = torch.exp(-gear_to_target_xy / self.cfg_task.xy_strict_gate_scale)
+
         # (6) Coarse Z descent — bridges the gap between r_xy_align (no z signal)
         # and r_descent (5 mm fine, both saturated during transport). Fires once
-        # gear is roughly XY-aligned over the bolt at 2–10 cm height.
+        # gear is XY-aligned within the success xy criterion (2.5 mm). Earlier
+        # this used the 5 cm xy_coarse gate, which let policy farm z_descend
+        # while still 5 cm off horizontally — pressing down at the wrong place.
         z_progress_coarse = torch.exp(-z_dist / self.cfg_task.z_coarse_scale)
-        r_z_descend = r_lift * xy_coarse * z_progress_coarse
+        r_z_descend = r_lift * xy_strict * z_progress_coarse
 
         # (7) Yaw alignment reward — geometric-base offsets in xy_dist cancel only
         # when gear_yaw ≈ fixed_yaw. Triple-gated on (xy_coarse × z_close × lift)
@@ -419,7 +427,38 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         yaw_diff = gear_yaw - fixed_yaw
         yaw_diff = torch.atan2(torch.sin(yaw_diff), torch.cos(yaw_diff))  # wrap to [-pi, pi]
         z_close = torch.exp(-z_dist / self.cfg_task.yaw_z_gate_scale)
-        r_yaw = r_lift * xy_coarse * z_close * torch.exp(-torch.abs(yaw_diff) / self.cfg_task.yaw_alignment_scale)
+        r_yaw = r_lift * xy_sharp * z_close * torch.exp(-torch.abs(yaw_diff) / self.cfg_task.yaw_alignment_scale)
+
+        # (8) Dense depth reward — break the "hover above bolt" local optimum.
+        # Policy was stalling at gear_above_target_z ≈ +9 mm with everything
+        # else aligned, because pushing down risked losing other rewards while
+        # the sparse curr_success bonus never fired. This term gives a
+        # continuous gradient pulling z down toward (and past) the success
+        # boundary at z_disp = ideal_z_disp (-15 mm for A_hard_success).
+        # Gated on (r_lift × xy_strict) so it can only fire when xy is inside
+        # the 2.5 mm success criterion — policy must align xy first, then press
+        # down. xy_strict gate prevents pressing gear to the floor far from the
+        # bolt.
+        # 2026-05-28: redesigned r_depth to reward APPROACHING target z too,
+        # not just descending past it. Previous form (clamp(depth_below_target
+        # / ideal_depth, 0, 1)) was 0 for any z > 0 — policy got no gradient
+        # while still hovering above the bolt, so it never bootstrapped into
+        # the descent regime. New form is a single linear ramp:
+        #
+        #   z = +depth_approach_scale  (e.g. +20 mm) → 0
+        #   z = 0  (target)                          → 1.0
+        #   z < 0  (below target / inside success)   → saturated 1.0
+        #
+        # so gear at +9 mm now contributes r_depth ≈ 0.55 → continuous pull
+        # down toward target. Once it crosses 0, the term stays at full and
+        # other shaping / curr_success take over.
+        depth_approach_scale = self.cfg_task.depth_approach_scale
+        r_depth = r_lift * xy_strict * torch.clamp(
+            1.0 - torch.clamp(gear_above_target_z, min=0.0) / depth_approach_scale,
+            0.0, 1.0,
+        )
+        # Diagnostic only — how far past target the gear has actually pushed.
+        depth_below_target = torch.clamp(-gear_above_target_z, min=0.0)
 
         rew_buf = (
             rew_buf
@@ -431,6 +470,7 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
             + self.cfg_task.z_align_reward_scale * r_z_descend
             + self.cfg_task.descent_reward_scale * r_descent
             + self.cfg_task.yaw_reward_scale * r_yaw
+            + self.cfg_task.depth_reward_scale * r_depth
         )
 
         # ---- Diagnostics (logged only; do NOT feed back into the policy) ----
@@ -457,6 +497,8 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         self.extras["logs_dist_to_success_z_min"] = dist_to_success_z.min()
         self.extras["logs_yaw_diff_abs"] = torch.abs(yaw_diff).mean()
         self.extras["logs_rew_yaw"] = r_yaw.mean()
+        self.extras["logs_rew_depth"] = r_depth.mean()
+        self.extras["logs_depth_below_target"] = depth_below_target.mean()
         self.extras["logs_rew_xy_align"] = r_xy_align.mean()
         self.extras["logs_rew_xy_align_sharp"] = r_xy_align_sharp.mean()
         self.extras["logs_xy_sharp_mean"] = xy_sharp.mean()
