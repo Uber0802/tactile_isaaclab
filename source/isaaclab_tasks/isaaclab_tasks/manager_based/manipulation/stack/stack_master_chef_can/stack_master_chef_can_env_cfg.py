@@ -201,10 +201,9 @@ class FrankaStackMasterChefCanEnvCfg(StackEnvCfg):
         # post init of parent
         super().__post_init__()
 
+        self.sim.physx.enable_ccd = True
         # Set events
         self.events = EventCfg()
-
-        self.set_friction = True
 
         # Set Franka as robot
         self.scene.robot = FRANKA_PANDA_CFG.replace(
@@ -226,13 +225,6 @@ class FrankaStackMasterChefCanEnvCfg(StackEnvCfg):
             ),
         )
         self.scene.robot.spawn.semantic_tags = [("class", "robot")]
-
-        # Override gripper actuator settings for compliant, careful tactile gripping
-        self.scene.robot.actuators["panda_hand"].stiffness = 1000.0
-        self.scene.robot.actuators["panda_hand"].damping = 30.0
-        self.scene.robot.actuators["panda_hand"].effort_limit_sim = 80.0
-        self.scene.robot.actuators["panda_hand"].velocity_limit_sim = 0.04
-
         # Add semantics to table
         self.scene.table.spawn.semantic_tags = [("class", "table")]
 
