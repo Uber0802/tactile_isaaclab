@@ -80,3 +80,5 @@ assets/
 *.pth
 *.png
 **/peg_plot/*
+**/peg_plot/*
+**/visualization/*

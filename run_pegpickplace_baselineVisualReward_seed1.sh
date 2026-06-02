@@ -3,12 +3,10 @@
 CACHE_DIR="/tmp/${USER}_${HOSTNAME%%.*}_isaac"
 mkdir -p "$CACHE_DIR/tmp" "$CACHE_DIR/cache/ov" "$CACHE_DIR/torch/triton" "$CACHE_DIR/torch/inductor"
 
-# Baseline A_legacy for peg pickplace: reproduces the May 15 commit ed32dd8
-# reward shaping (no coarse XY bridge, no Z bridge, tight 1cm descent gate).
-# This is the "right difficulty" regime per the q50f4175 run result —
-# baselineA can eventually solve the task in ~16h but with room for tactile
-# reward shaping to demonstrate measurable improvement. Pair with
-# run_pegpickplace_baselineTacReward_legacy.sh for the +tactile comparison.
+# Identical to run_pegpickplace_baselineVisualReward.sh except --seed 1 and a
+# seed-suffixed wandb/experiment name so the two runs don't clash on disk or
+# in the wandb dashboard. Pair with seed 0 (the original script) for variance
+# estimation.
 TMPDIR="$CACHE_DIR/tmp" \
 XDG_CACHE_HOME="$CACHE_DIR/cache" \
 OMNI_KIT_CACHE_DIR="$CACHE_DIR/cache/ov" \
@@ -16,17 +14,25 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
+FORGE_ENABLE_FRONT_CAM=1 \
+FORGE_VISUAL_REWARD_CKPT=/mnt/tank/uber/Tactile-Reward/ckpt_visual/rewind_pegpickplace_epoch_019.pth \
+FORGE_VISUAL_REWARD_SCALE=0.1 \
+FORGE_VISUAL_REWARD_INSTRUCTION="grasp peg and insert to another hole" \
+FORGE_VISUAL_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-party/ReWiND \
+FORGE_VISUAL_REWARD_BACKBONE=dinov2_vitb14 \
+FORGE_VISUAL_REWARD_DINO_INTERVAL=1 \
+FORGE_SKIP_TACTILE_SENSORS=1 \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
     --baseline A_legacy \
     --headless \
-    --seed 1 \
-    --num_envs 128 \
+    --num_envs 256 \
     --max_iterations 10000 \
+    --seed 2 \
     --enable_cameras \
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name PegInsert_PickPlace_baselineA_legacy_seed1 \
-    agent.params.config.full_experiment_name=PegInsert_PickPlace_baselineA_legacy_seed1 \
+    --wandb-name PegInsert_PickPlace_baselineVisualReward_legacy0.1_seed2 \
+    agent.params.config.full_experiment_name=PegInsert_PickPlace_baselineVisualReward_legacy0.1_seed2 \
     agent.params.config.save_frequency=20

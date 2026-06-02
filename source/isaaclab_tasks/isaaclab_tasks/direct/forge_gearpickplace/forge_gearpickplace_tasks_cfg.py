@@ -113,3 +113,24 @@ class ForgeGearMeshPickPlace(ForgeGearMesh):
     # policy doesn't spin the gripper at 5 cm height while ignoring descent.
     # z_dist=0 → 1.0 (full reward), z_dist=2 cm → 0.37, z_dist=5 cm → 0.08.
     yaw_z_gate_scale: float = 0.02
+
+    # Dense depth reward — pulls gear from "hover above bolt" past the
+    # success boundary. Linear from 0 at z_disp=0 (target z) to 1 at
+    # z_disp=ideal_z_disp (15 mm below target for A_hard_success). Gated by
+    # r_lift × xy_strict so it ONLY fires when xy is inside the 2.5 mm
+    # success criterion — forces "align xy first, then press down". Big scale
+    # (1.0) so the descent step dominates the "hover trap".
+    depth_reward_scale: float = 1.0
+    # Window above target z (m) over which r_depth ramps from 0 to 1. At
+    # gear_z = +depth_approach_scale the reward is 0; at gear_z = 0 (target)
+    # it reaches 1; below target stays saturated at 1. Pick 20 mm so the
+    # ramp covers the policy's typical "hover-above-bolt" plateau (+9 mm) —
+    # gear at +9 mm gets reward ~0.55, encouraging continued descent.
+    depth_approach_scale: float = 0.02
+
+    # Strict XY gate matching the success-criterion xy threshold (2.5 mm).
+    # `exp(-xy / 0.0025)`: xy=2.5 mm → 0.37, xy=5 mm → 0.14, xy=10 mm → 0.018.
+    # Used for r_z_descend and r_depth so z-progress reward only fires when
+    # the gear is inside the success xy region. Differentiable so the policy
+    # gets gradient even slightly outside, but >5 mm the gate is effectively 0.
+    xy_strict_gate_scale: float = 0.0025

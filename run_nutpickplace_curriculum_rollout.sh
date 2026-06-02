@@ -1,63 +1,53 @@
 #!/bin/bash
-# Curriculum rollout: load each baseline-A snapshot, briefly run in single_pos
-# to collect tactile trajectories at that skill level, save to a per-ckpt subdir.
-# Output: /mnt/tank/tactile/tactile_dataset/nutpickplace_curriculum/<label>/ep*.npy
-# Init pose is fixed (baseline single_pos), so tactile variation across the
-# combined dataset comes purely from policy-skill progression.
+# Curriculum rollout for nut pickplace — best-ckpt only, one trajectory per
+# env, BOTH tactile force field AND RGB front camera saved. Runs twice:
+#   1. single_pos baseline → deterministic init pose
+#   2. A baseline           → full randomization (multipos)
+# Same ckpt, same num_envs, same per-env quota. Output structure:
+#
+#   pegpickplace_paired/
+#     single_pos/ep_NNN/
+#       ep<N>_env<XXX>.npy          ← tactile (T, 40, 25, 3) float16
+#       ep<N>_env<XXX>_camera.npy   ← RGB     (T, 224, 224, 3) uint8
+#     multipos/ep_NNN/
+#       (same files)
+#
+# Tactile sensors stay ON (we want tactile force fields). Front camera also on.
 
 set -e
 
-# Per-machine local cache so two hosts sharing the same NAS $HOME don't fight
-# over Omniverse / Triton / Torch caches (NFS lock contention slows training to a crawl).
 CACHE_DIR="/tmp/${USER}_${HOSTNAME%%.*}_isaac"
 mkdir -p "$CACHE_DIR/tmp" "$CACHE_DIR/cache/ov" "$CACHE_DIR/torch/triton" "$CACHE_DIR/torch/inductor"
 
 CKPTS_DIR=/mnt/home/tactile/tactile_isaaclab/logs/rl_games/ForgeNutPickPlace/NutThread_PickPlace_baselineA/nn
-BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/nutpickplace_curriculum_rgb_multipos
+BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/nutpickplace_paired
 
-# Explicit ep list spanning the nut baselineA skill curve (brq5z3uu, May 10):
-#   ep_20   ~ 5% success
-#   ep_60   ~ 15%
-#   ep_100  ~ 21%
-#   ep_140  ~ 40%
-#   ep_180  ~ 49%
-#   ep_220  ~ 53%
-#   ep_260  ~ 57%
-TARGET_EPS=(20 60 100 140 180 220 260)
-CKPTS=()
-for ep in "${TARGET_EPS[@]}"; do
-    match=$(find "$CKPTS_DIR" -name "last_ForgeNutPickPlace_ep_${ep}_rew_*.pth" 2>/dev/null | head -1)
-    if [ -n "$match" ]; then
-        CKPTS+=("$(basename "$match")")
+# Use the BEST nut baselineA snapshot (ep_260, ~57% success).
+BEST_EP=260
+CKPT_NAME=$(find "$CKPTS_DIR" -name "last_ForgeNutPickPlace_ep_${BEST_EP}_rew_*.pth" 2>/dev/null | head -1)
+if [ -z "$CKPT_NAME" ]; then
+    echo "[fatal] ep_${BEST_EP} ckpt not found in $CKPTS_DIR"; exit 1
+fi
+CKPT_NAME=$(basename "$CKPT_NAME")
+CKPT_PATH="$CKPTS_DIR/$CKPT_NAME"
+LABEL="ep_${BEST_EP}"
+CKPT_EPOCH=$BEST_EP
+
+NUM_ENVS=64                # → 64 trajectories per pass (per-env quota = 1)
+ITERS_PER_CKPT=5           # safety upper bound; early-exits when all envs saved
+SIGMA=0.3
+MAX_ITERS_ABS=$((CKPT_EPOCH + ITERS_PER_CKPT))
+
+# Run twice — one per init-pose mode.
+for BASELINE in single_pos A; do
+    if [ "$BASELINE" = "A" ]; then
+        SUBDIR="multipos"
     else
-        echo "[warn] missing ep_$ep — skipping"
+        SUBDIR="$BASELINE"
     fi
-done
-echo "Selected ${#CKPTS[@]} ckpts: ${CKPTS[*]}"
-
-# Per-ckpt rollout budget. One PPO iter ≈ horizon_length (256) × num_envs steps.
-# At 30 s episode length and 60 Hz, ~600 steps per episode, so 50 iters × 256
-# horizon × 128 envs ≈ ~2.7k episodes per ckpt. Tune to taste.
-ITERS_PER_CKPT=20
-SIGMA=0.3   # mild action noise so the 128 envs aren't identical; lower=more deterministic
-
-for ckpt_name in "${CKPTS[@]}"; do
-    ckpt_path="$CKPTS_DIR/$ckpt_name"
-    if [ ! -f "$ckpt_path" ]; then
-        echo "[skip] missing ckpt: $ckpt_path"
-        continue
-    fi
-    # Label = ep_NNN portion of the filename, e.g. ep_300
-    label=$(echo "$ckpt_name" | grep -oE 'ep_[0-9]+')
-    ckpt_epoch=${label#ep_}
-    # rl_games loads the ckpt's epoch counter on restore, so `--max_iterations N`
-    # (which sets `max_epochs = N`, absolute) would exit immediately if N <=
-    # ckpt_epoch. Compute the absolute target so we actually run ITERS_PER_CKPT
-    # PPO iters relative to the loaded ckpt.
-    max_iters_abs=$((ckpt_epoch + ITERS_PER_CKPT))
-    save_dir="$BASE_SAVE_DIR/$label"
-    mkdir -p "$save_dir"
-    echo "==== [$label] ckpt=$ckpt_name → $save_dir  (max_epochs=$max_iters_abs) ===="
+    SAVE_DIR="$BASE_SAVE_DIR/$SUBDIR/$LABEL"
+    mkdir -p "$SAVE_DIR"
+    echo "==== [$SUBDIR / $LABEL] baseline=$BASELINE → $SAVE_DIR ===="
 
     TMPDIR="$CACHE_DIR/tmp" \
     XDG_CACHE_HOME="$CACHE_DIR/cache" \
@@ -66,18 +56,18 @@ for ckpt_name in "${CKPTS[@]}"; do
     TORCH_HOME="$CACHE_DIR/torch" \
     TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
     TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-    FORGE_SKIP_TACTILE_SENSORS=1 \
+    FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
     FORGE_SAVE_TACTILE_ALL_ENVS=1 \
     FORGE_SAVE_CAMERA=1 \
     FORGE_ENABLE_FRONT_CAM=1 \
     FORGE_TACTILE_EPISODES_PER_ENV=1 \
-    FORGE_TACTILE_SAVE_DIR="$save_dir" \
+    FORGE_TACTILE_SAVE_DIR="$SAVE_DIR" \
     ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
         --task Isaac-Forge-NutThread-PickPlace-Direct-v0 \
-        --baseline A \
-        --checkpoint "$ckpt_path" \
-        --num_envs 64 \
-        --max_iterations $max_iters_abs \
+        --baseline "$BASELINE" \
+        --checkpoint "$CKPT_PATH" \
+        --num_envs $NUM_ENVS \
+        --max_iterations $MAX_ITERS_ABS \
         --sigma $SIGMA \
         --headless \
         --enable_cameras \
