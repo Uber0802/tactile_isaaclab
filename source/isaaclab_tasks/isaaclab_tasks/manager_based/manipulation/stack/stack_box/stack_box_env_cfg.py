@@ -2,7 +2,8 @@ import os
 import isaaclab.sim as sim_utils
 
 
-from isaaclab.assets import RigidObjectCfg
+from isaaclab.assets import RigidObjectCfg, ArticulationCfg
+from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -69,7 +70,7 @@ class EventCfg:
         func=franka_stack_events.set_default_joint_pose,
         mode="reset",
         params={
-            "default_pose": [0.0444, -0.1894, -0.1107, -2.5148, 0.0044, 2.3775, 0.6952, 0.0400, 0.0400],
+            "default_pose": [-0.4536, 0.1362, 0.3922, -2.3182, -0.1029, 2.223, 0.7862, 0.0400, 0.0400],
         },
     )
 
@@ -87,7 +88,7 @@ class EventCfg:
         func=franka_stack_events.randomize_object_pose,
         mode="reset",
         params={
-            "pose_range": {"x": (0.4, 0.6), "y": (-0.10, 0.10), "yaw": (-1.0, 1, 0)},
+            "pose_range": {"x": (0.4, 0.6), "y": (-0.10, 0.10), "yaw": (-1.0, 1)},
             "min_separation": 0.1,
             "asset_cfgs": [SceneEntityCfg("stack_object"), SceneEntityCfg("target_cube")],
         },
@@ -104,13 +105,14 @@ class FrankaStackBoxEnvCfg(StackEnvCfg):
 
     enable_front_cam: bool = os.environ.get("FORGE_ENABLE_FRONT_CAM", "0") == "1"
     """Whether to enable the front-facing camera in the scene and observations."""
+    enable_sensor: bool = os.environ.get("FORGE_ENABLE_SENSOR", "0") == "1"
 
     left_tactile_sensor: VisuoTactileSensorCfg = VisuoTactileSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_link/tactile_sensor",
         update_period=1 / 15,
         render_cfg=GELSIGHT_R15_CFG,
-        enable_camera_tactile=True,
-        enable_force_field=True,
+        enable_camera_tactile=False,
+        enable_force_field=False,
         tactile_array_size=(20, 25),
         tactile_margin=0.003,
         contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
@@ -130,8 +132,8 @@ class FrankaStackBoxEnvCfg(StackEnvCfg):
         prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_link/tactile_sensor",
         update_period=1 / 15,
         render_cfg=GELSIGHT_R15_CFG,
-        enable_camera_tactile=True,
-        enable_force_field=True,
+        enable_camera_tactile=False,
+        enable_force_field=False,
         tactile_array_size=(20, 25),
         tactile_margin=0.003,
         contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
@@ -156,23 +158,75 @@ class FrankaStackBoxEnvCfg(StackEnvCfg):
         self.events = EventCfg()
 
         # Set Franka as robot
-        self.scene.robot = FRANKA_PANDA_CFG.replace(
+        self.scene.robot = ArticulationCfg(
             prim_path="{ENV_REGEX_NS}/Robot",
-            spawn=sim_utils.UsdFileWithCompliantContactCfg(
+            spawn=sim_utils.UsdFileCfg(
                 usd_path=LOCAL_PEG_INSERT_ROBOT_USD_PATH,
                 activate_contact_sensors=True,
-                rigid_props=FRANKA_PANDA_CFG.spawn.rigid_props,
-                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                    enabled_self_collisions=False, solver_position_iteration_count=8, solver_velocity_iteration_count=0
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    disable_gravity=True,
+                    max_depenetration_velocity=5.0,
+                    linear_damping=0.0,
+                    angular_damping=0.0,
+                    max_linear_velocity=1000.0,
+                    max_angular_velocity=3666.0,
+                    enable_gyroscopic_forces=True,
+                    solver_position_iteration_count=192,
+                    solver_velocity_iteration_count=1,
+                    max_contact_impulse=1e32,
                 ),
-                collision_props=FRANKA_PANDA_CFG.spawn.collision_props,
-                compliant_contact_stiffness=1000.0,
-                compliant_contact_damping=100.0,
-                physics_material_prim_path=[
-                    "left_elastomer_link",
-                    "right_elastomer_link",
-                ],
+                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                    enabled_self_collisions=False,
+                    solver_position_iteration_count=192,
+                    solver_velocity_iteration_count=1,
+                    fix_root_link=True,
+                ),
+                collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
             ),
+            init_state=ArticulationCfg.InitialStateCfg(
+                joint_pos={
+                    "panda_joint1": -0.4536,
+                    "panda_joint2": 0.1362,
+                    "panda_joint3": 0.3922,
+                    "panda_joint4": -2.3182,
+                    "panda_joint5": -0.1029,
+                    "panda_joint6": 2.223,
+                    "panda_joint7": 0.7862,
+                    "panda_finger_joint1": 0.04,
+                    "panda_finger_joint2": 0.04,
+                },
+                pos=(0.0, 0.0, 0.0),
+                rot=(1.0, 0.0, 0.0, 0.0),
+            ),
+            actuators={
+                "panda_shoulder": ImplicitActuatorCfg(
+                    joint_names_expr=["panda_joint[1-4]"],
+                    stiffness=15.0,
+                    damping=8.0,
+                    friction=0.0,
+                    armature=0.0,
+                    effort_limit_sim=87,
+                    velocity_limit_sim=124.6,
+                ),
+                "panda_forearm": ImplicitActuatorCfg(
+                    joint_names_expr=["panda_joint[5-7]"],
+                    stiffness=15.0,
+                    damping=8.0,
+                    friction=0.0,
+                    armature=0.0,
+                    effort_limit_sim=12,
+                    velocity_limit_sim=149.5,
+                ),
+                "panda_hand": ImplicitActuatorCfg(
+                    joint_names_expr=["panda_finger_joint[1-2]"],
+                    effort_limit_sim=200.0,
+                    velocity_limit_sim=0.05,
+                    stiffness=7500.0,
+                    damping=0.0,
+                    friction=0.1,
+                    armature=0.0,
+                ),
+            },
         )
         self.scene.robot.spawn.semantic_tags = [("class", "robot")]
 
@@ -183,7 +237,11 @@ class FrankaStackBoxEnvCfg(StackEnvCfg):
         self.scene.plane.semantic_tags = [("class", "ground")]
 
         # Add tactile sensors to the scene
-        if self.left_tactile_sensor.enable_camera_tactile:
+        if self.enable_sensor:
+            self.left_tactile_sensor.enable_camera_tactile = True
+            self.left_tactile_sensor.enable_force_field = True
+            self.right_tactile_sensor.enable_camera_tactile = True
+            self.right_tactile_sensor.enable_force_field = True
             self.scene.left_tactile_sensor = self.left_tactile_sensor
             self.scene.right_tactile_sensor = self.right_tactile_sensor
 
@@ -209,7 +267,7 @@ class FrankaStackBoxEnvCfg(StackEnvCfg):
             solver_velocity_iteration_count=1,
             max_angular_velocity=1000.0,
             max_linear_velocity=1000.0,
-            max_depenetration_velocity=1.0,
+            max_depenetration_velocity=5.0,
             disable_gravity=False,
         )
 

@@ -165,8 +165,8 @@ class FrankaStackBowlEnvCfg(StackEnvCfg):
         prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_link/tactile_sensor",
         update_period=1 / 15,
         render_cfg=GELSIGHT_R15_CFG,
-        enable_camera_tactile=True,
-        enable_force_field=True,
+        enable_camera_tactile=False,
+        enable_force_field=False,
         tactile_array_size=(20, 25),
         tactile_margin=0.003,
         contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
@@ -186,8 +186,8 @@ class FrankaStackBowlEnvCfg(StackEnvCfg):
         prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_link/tactile_sensor",
         update_period=1 / 15,
         render_cfg=GELSIGHT_R15_CFG,
-        enable_camera_tactile=True,
-        enable_force_field=True,
+        enable_camera_tactile=False,
+        enable_force_field=False,
         tactile_array_size=(20, 25),
         tactile_margin=0.003,
         contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
@@ -239,8 +239,13 @@ class FrankaStackBowlEnvCfg(StackEnvCfg):
         self.scene.plane.semantic_tags = [("class", "ground")]
 
         # Add tactile sensors to the scene
-        self.scene.left_tactile_sensor = self.left_tactile_sensor
-        self.scene.right_tactile_sensor = self.right_tactile_sensor
+        if self.enable_sensor:
+            self.left_tactile_sensor.enable_camera_tactile = True
+            self.left_tactile_sensor.enable_force_field = True
+            self.right_tactile_sensor.enable_camera_tactile = True
+            self.right_tactile_sensor.enable_force_field = True
+            self.scene.left_tactile_sensor = self.left_tactile_sensor
+            self.scene.right_tactile_sensor = self.right_tactile_sensor
 
         # Set actions for the specific robot type (franka)
         self.actions.arm_action = mdp.JointPositionActionCfg(

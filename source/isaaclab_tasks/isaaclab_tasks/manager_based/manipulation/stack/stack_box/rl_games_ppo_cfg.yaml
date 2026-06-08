@@ -70,14 +70,14 @@ params:
     learning_rate: 1.0e-4
     lr_schedule: adaptive
     schedule_type: standard
-    kl_threshold: 0.004
+    kl_threshold: 0.008
     score_to_win: 200000000
     max_epochs: 200000
     save_best_after: 5
     save_frequency: 100
     print_stats: True
     grad_norm: 1.0
-    entropy_coef: 0.002
+    entropy_coef: 0.005
     truncate_grads: True
     e_clip: 0.2
     horizon_length: 128

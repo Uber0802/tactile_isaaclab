@@ -281,7 +281,7 @@ def main():
     print(f"  pos_sensitivity: {pos_sensitivity}")
     print(f"  rot_sensitivity: {rot_sensitivity}")
     
-    env_cfg = FrankaStackBoxEnvCfg()
+    env_cfg = FrankaStackPottedMeatCanEnvCfg()
     env_cfg.scene.num_envs = 1
     env_cfg.episode_length_s = 1000.0 # Extend episode length to 1000 seconds for manual debugging
     
