@@ -22,7 +22,7 @@ class StackTactileEnv(ManagerBasedRLEnv):
                     func=franka_stack_events.randomize_object_pose,
                     mode="reset",
                     params={
-                        "pose_range": {"x": (0.46, 0.46), "y": (-0.05, -0.05), "yaw": (-1.0, 1, 0)},
+                        "pose_range": {"x": (0.46, 0.46), "y": (-0.05, -0.05), "yaw": (-1.0, -1.0)},
                         "asset_cfgs": [SceneEntityCfg("stack_object"),],
                     },
                 )
@@ -30,7 +30,7 @@ class StackTactileEnv(ManagerBasedRLEnv):
                     func=franka_stack_events.randomize_object_pose,
                     mode="reset",
                     params={
-                        "pose_range": {"x": (0.54, 0.54), "y": (0.05, 0.05), "yaw": (-1.0, 1, 0)},
+                        "pose_range": {"x": (0.54, 0.54), "y": (0.05, 0.05), "yaw": (-1.0, -1.0)},
                         "asset_cfgs": [SceneEntityCfg("target_cube")],
                     },
                 )

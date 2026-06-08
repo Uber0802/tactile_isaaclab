@@ -183,8 +183,9 @@ class FrankaStackBoxEnvCfg(StackEnvCfg):
         self.scene.plane.semantic_tags = [("class", "ground")]
 
         # Add tactile sensors to the scene
-        self.scene.left_tactile_sensor = self.left_tactile_sensor
-        self.scene.right_tactile_sensor = self.right_tactile_sensor
+        if self.left_tactile_sensor.enable_camera_tactile:
+            self.scene.left_tactile_sensor = self.left_tactile_sensor
+            self.scene.right_tactile_sensor = self.right_tactile_sensor
 
         # Set actions for the specific robot type (franka)
         self.actions.arm_action = mdp.JointPositionActionCfg(

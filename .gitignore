@@ -72,3 +72,10 @@ tests/
 
 # TacSL sensor
 **/tactile_dataset/*
+
+test_script/
+assets/
+.antigravity
+.antigravitycli/
+*.pth
+*.png

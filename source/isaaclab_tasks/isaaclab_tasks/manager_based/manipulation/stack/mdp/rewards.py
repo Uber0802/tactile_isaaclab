@@ -134,7 +134,7 @@ def ee_to_stack_object_distance_reward(
     distance = torch.linalg.vector_norm(ee_pos - stack_object_pos, dim=1)
     shaped_reward = torch.clamp(1.0 - (distance / max_distance), min=0.0, max=1.0) * max_reward
 
-    _maybe_visualize_ee_pos(env, ee_pos)
+    # _maybe_visualize_ee_pos(env, ee_pos)
                 
     return shaped_reward
 
@@ -142,12 +142,13 @@ def stack_object_z_reward_exp(
     env: ManagerBasedRLEnv,
     stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
     max_z_distance: float = 0.0234 * 3,
+    min_z: float = 0.0,
 ) -> torch.Tensor:
     """Apply a base-1.1 logarithmic reward directly on cube-1's Z height."""
 
     stack_object = env.scene[stack_object_cfg.name]
     stack_object_pos = _get_pos(stack_object)
-    cube_height = torch.clamp(stack_object_pos[:, 2], min=0.0, max=max_z_distance)
+    cube_height = torch.clamp(stack_object_pos[:, 2], min=min_z, max=max_z_distance)
     exceed = stack_object_pos[:, 2] - (max_z_distance + 0.01)
     exceed = torch.clamp(exceed, min=0.0)
 
@@ -155,7 +156,7 @@ def stack_object_z_reward_exp(
     reward -= exceed 
     reward = torch.clamp(reward, min=0.0)
 
-    _maybe_visualize_stack_target(env, stack_object_pos, 0.5, marker_name="cube_1", color=(0.0, 0.35, 1.0))
+    # _maybe_visualize_stack_target(env, stack_object_pos, 0.5, marker_name="cube_1", color=(0.0, 0.35, 1.0))
 
 
     return reward

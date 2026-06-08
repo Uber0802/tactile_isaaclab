@@ -4,27 +4,39 @@
 
 set -e
 
-CKPTS_DIR=~/ml/tactile-irl/tactile_isaaclab/logs/rl_games/franka_stack/2026-05-16_12-01-12/nn
-BASE_SAVE_DIR=./tactile_dataset/stack_box/curriculum
+CKPTS_DIR=~/ml/tactile-irl/tactile_isaaclab/nn
+BASE_SAVE_DIR=./tactile_dataset/stack_box/curriculum_multipos
 
 #Curriculum spectrum: sample snapshots across the whole skill range.
 #Set CKPT_STRIDE=1 to roll out EVERY checkpoint (77 snapshots),
 #or CKPT_STRIDE=4 for a quicker sparse rollout (~20 snapshots).
 CKPTS=(
-    "last_franka_stack_ep_100_rew_6.6411943.pth"
-    "last_franka_stack_ep_2000_rew_19.127062.pth"
-    "last_franka_stack_ep_3000_rew_23.470303.pth"
-    "last_franka_stack_ep_4000_rew_39.847878.pth"
-    "last_franka_stack_ep_5200_rew_83.71594.pth"
-    "last_franka_stack_ep_6500_rew_107.38488.pth"
-    "last_franka_stack_ep_7300_rew_114.50604.pth"
-    "last_franka_stack_ep_7700_rew_113.10287.pth"
+    "last_franka_stack_ep_100_rew_6.677147.pth"
+    "last_franka_stack_ep_400_rew_7.2512236.pth"
+    "last_franka_stack_ep_700_rew_7.757937.pth"
+    "last_franka_stack_ep_1000_rew_8.924516.pth"
+    "last_franka_stack_ep_1300_rew_11.001369.pth"
+    "last_franka_stack_ep_1600_rew_12.429459.pth"
+    "last_franka_stack_ep_1900_rew_13.496348.pth"
+    "last_franka_stack_ep_2200_rew_14.337699.pth"
+    "last_franka_stack_ep_2500_rew_17.27967.pth"
+    "last_franka_stack_ep_2800_rew_19.043896.pth"
+    "last_franka_stack_ep_3100_rew_22.553942.pth"
+    "last_franka_stack_ep_3400_rew_25.260508.pth"
+    "last_franka_stack_ep_3700_rew_28.634111.pth"
+    "last_franka_stack_ep_4000_rew_29.927746.pth"
+    "last_franka_stack_ep_4300_rew_37.87523.pth"
+    "last_franka_stack_ep_4600_rew_39.98565.pth"
+    "last_franka_stack_ep_4900_rew_51.786015.pth"
+    "last_franka_stack_ep_5200_rew_52.69835.pth"
+    "last_franka_stack_ep_5500_rew_50.053093.pth"
+    "last_franka_stack_ep_5700_rew_73.564156.pth"
 )
 
 
 # ITERS_PER_CKPT = EPISODES_PER_ENV * 2 ensures each env completes at least EPISODES_PER_ENV episodes per checkpoint
-EPISODES_PER_ENV=5
-ITERS_PER_CKPT=10
+EPISODES_PER_ENV=1
+ITERS_PER_CKPT=2
 
 for ckpt_name in "${CKPTS[@]}"; do
     ckpt_path="$CKPTS_DIR/$ckpt_name"
@@ -45,7 +57,7 @@ for ckpt_name in "${CKPTS[@]}"; do
     mkdir -p "$save_dir"
     echo "==== [$label] ckpt=$ckpt_name → $save_dir  (max_epochs=$max_iters_abs) ===="
 
-    FORGE_FIXED_OBJECT_POS=1 \
+    FORGE_FIXED_OBJECT_POS=0 \
     FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
     FORGE_SAVE_TACTILE_ALL_ENVS=1 \
     FORGE_ENABLE_FRONT_CAM=1 \
@@ -55,9 +67,10 @@ for ckpt_name in "${CKPTS[@]}"; do
     ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
         --task Isaac-Stack-Cube-Franka-Gelsight-v0 \
         --checkpoint "$ckpt_path" \
-        --num_envs 256 \
+        --num_envs 32 \
         --max_iterations $max_iters_abs \
         --enable_cameras \
+        --headless \
         agent.params.config.learning_rate=0 \
         agent.params.config.lr_schedule=fixed \
         agent.params.config.save_frequency=999999 \

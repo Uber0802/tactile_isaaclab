@@ -1,6 +1,8 @@
 import os
 import torch
 import numpy as np
+import matplotlib
+matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 import gymnasium as gym
 from isaaclab.app import AppLauncher
@@ -19,6 +21,8 @@ from isaaclab_tasks.manager_based.manipulation.stack.stack_lamp_bulb.stack_lamp_
 from isaaclab_tasks.manager_based.manipulation.stack.stack_lighter.stack_lighter_env_cfg import FrankaStackLighterEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_banana.stack_banana_env_cfg import FrankaStackBananaEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_bowl.stack_bowl_env_cfg import FrankaStackBowlEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.stack_potted_meat_can.stack_potted_meat_can_env_cfg import FrankaStackPottedMeatCanEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.stack_master_chef_can.stack_master_chef_can_env_cfg import FrankaStackMasterChefCanEnvCfg
 from isaaclab_tasks.manager_based.manipulation.stack.stack_mug.stack_mug_env_cfg import FrankaStackMugEnvCfg
 from isaaclab_contrib.sensors.tacsl_sensor.visuotactile_render import compute_tactile_shear_image
 
@@ -29,28 +33,79 @@ from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
 from isaaclab.devices.keyboard import Se3Keyboard, Se3KeyboardCfg
 
 
+TACTILE_H, TACTILE_W = 20, 25
+DISPLAY_SCALE = 10             # upscale factor for display
+DISPLAY_INTERVAL = 3           # update window every N sim steps
+
+# Matplotlib live display state
+_ff_fig = None
+_ff_im_left = None
+_ff_im_right = None
+
+
+def _init_force_field_display() -> None:
+    global _ff_fig, _ff_im_left, _ff_im_right
+    plt.ion()
+    _ff_fig, (ax_l, ax_r) = plt.subplots(1, 2, figsize=(8, 3))
+    _ff_fig.suptitle("Tactile Force Field (real-time)")
+    blank = np.zeros((TACTILE_H * DISPLAY_SCALE, TACTILE_W * DISPLAY_SCALE, 3), dtype=np.uint8)
+    ax_l.set_title("Left")
+    ax_r.set_title("Right")
+    for ax in (ax_l, ax_r):
+        ax.axis("off")
+    _ff_im_left  = ax_l.imshow(blank)
+    _ff_im_right = ax_r.imshow(blank)
+    plt.tight_layout()
+    plt.show(block=False)
+    plt.pause(0.001)
+
+
+def _render_sensor(sensor_data) -> np.ndarray:
+    """Return a uint8 RGB array for one sensor, or a blank panel if no data."""
+    h = TACTILE_H * DISPLAY_SCALE
+    w = TACTILE_W * DISPLAY_SCALE
+    blank = np.zeros((h, w, 3), dtype=np.uint8)
+    if sensor_data is None:
+        return blank
+    if (
+        sensor_data.tactile_normal_force is None
+        or sensor_data.tactile_shear_force is None
+    ):
+        return blank
+    normal = sensor_data.tactile_normal_force[0].cpu().numpy().reshape(TACTILE_H, TACTILE_W)
+    shear  = sensor_data.tactile_shear_force[0].cpu().numpy().reshape(TACTILE_H, TACTILE_W, 2)
+    img_bgr = compute_tactile_shear_image(normal, shear)                # float32 [0,1] BGR
+    img_bgr = (img_bgr * 255).astype(np.uint8)
+    img_rgb = cv2.cvtColor(cv2.resize(img_bgr, (w, h), interpolation=cv2.INTER_NEAREST), cv2.COLOR_BGR2RGB)
+    return img_rgb
+
+
+def _update_force_field_window(left_sensor, right_sensor) -> None:
+    if _ff_fig is None or _ff_im_left is None or _ff_im_right is None:
+        return
+    _ff_im_left.set_data(_render_sensor(left_sensor.data   if left_sensor  else None))
+    _ff_im_right.set_data(_render_sensor(right_sensor.data if right_sensor else None))
+    _ff_fig.canvas.draw_idle()
+    plt.pause(0.001)
+
+
 def save_gelsight_full_visualization(sensor_data, filename_prefix, title_prefix=""):
     """
     Save tactile visualizations using the same approach as the official tacsl_sensor.py demo.
     """
-    H, W = 20, 25
-
     if (
         sensor_data.tactile_normal_force is not None
         and sensor_data.tactile_shear_force is not None
     ):
-        normal = sensor_data.tactile_normal_force[0].cpu().numpy().reshape(H, W)
-        shear  = sensor_data.tactile_shear_force[0].cpu().numpy().reshape(H, W, 2)
-
-        # compute_tactile_shear_image returns a float32 image in [0, 1], BGR channel order
-        tactile_ff_img = compute_tactile_shear_image(normal, shear)         # (H*scale, W*scale, 3)
+        normal = sensor_data.tactile_normal_force[0].cpu().numpy().reshape(TACTILE_H, TACTILE_W)
+        shear  = sensor_data.tactile_shear_force[0].cpu().numpy().reshape(TACTILE_H, TACTILE_W, 2)
+        tactile_ff_img = compute_tactile_shear_image(normal, shear)
         cv2.imwrite(
             f"{filename_prefix}_force_field.png",
             (tactile_ff_img * 255).astype(np.uint8),
         )
         print(f"Saved: {filename_prefix}_force_field.png")
     else:
-        tactile_ff_img = None
         print(f"[Warning] Cannot save visualization for {title_prefix} sensor: tactile_normal_force or tactile_shear_force is None. Ensure 'enable_force_field=True' and that the robot elastomer makes contact.")
 
 
@@ -104,6 +159,8 @@ def run_manual_test(env, gripper_fixed_position=0.015, pos_sensitivity=0.05, rot
 
     teleop_interface.add_callback("T", toggle_mode)
     teleop_interface.add_callback("P", request_capture)
+
+    _init_force_field_display()
 
     print("\n---------------------------------------------------------")
     print("Starting Manual Test...")
@@ -174,8 +231,12 @@ def run_manual_test(env, gripper_fixed_position=0.015, pos_sensitivity=0.05, rot
         # 3. Step the environment
         obs, rew, terminated, truncated, info = env.step(actions)
 
-        # 4. Print individual reward terms
+        # 4. Update real-time force field display
         global_step += 1
+        if global_step % DISPLAY_INTERVAL == 0:
+            _update_force_field_window(left_sensor, right_sensor)
+
+        # 5. Print individual reward terms
         if global_step % 50 == 0:
             print(f"\n--- Step {global_step} Rewards ---")
             stack_obj_pos = env.unwrapped.scene["stack_object"].data.root_pos_w[0, :3] - env.unwrapped.scene.env_origins[0, :3]
@@ -220,7 +281,7 @@ def main():
     print(f"  pos_sensitivity: {pos_sensitivity}")
     print(f"  rot_sensitivity: {rot_sensitivity}")
     
-    env_cfg = FrankaStackBananaEnvCfg()
+    env_cfg = FrankaStackBoxEnvCfg()
     env_cfg.scene.num_envs = 1
     env_cfg.episode_length_s = 1000.0 # Extend episode length to 1000 seconds for manual debugging
     

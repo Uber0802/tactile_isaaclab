@@ -70,7 +70,7 @@ params:
     learning_rate: 1.0e-4
     lr_schedule: adaptive
     schedule_type: standard
-    kl_threshold: 0.008
+    kl_threshold: 0.004
     score_to_win: 200000000
     max_epochs: 200000
     save_best_after: 5

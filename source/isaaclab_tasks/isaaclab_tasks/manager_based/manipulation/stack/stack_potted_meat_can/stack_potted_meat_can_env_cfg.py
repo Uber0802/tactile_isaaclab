@@ -55,7 +55,8 @@ class GelsightRewardsCfg(RewardsCfg):
         func=mdp.stack_object_z_reward_exp,
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
-            "max_z_distance": 0.0756
+            "max_z_distance": 0.0756,
+            "min_z": 0.0302,
         },
         weight=1.0,
     )
@@ -133,7 +134,6 @@ class EventCfg:
             "asset_cfg": SceneEntityCfg("robot"),
         },
     )
-
     randomize_cube_positions = EventTerm(
         func=franka_stack_events.randomize_object_pose_use_rot,
         mode="reset",
@@ -143,7 +143,27 @@ class EventCfg:
             "asset_cfgs": [SceneEntityCfg("stack_object"), SceneEntityCfg("target_cube")],
         },
     )
+    '''
+    randomize_cube_positions_1 = EventTerm(
+        func=franka_stack_events.randomize_object_pose_use_rot,
+        mode="reset",
+        params={
+            "pose_range": {"x": (0.4, 0.45), "y": (-0.10, -0.05), "yaw": (-math.pi / 8, math.pi / 8)},
+            "min_separation": 0.1,
+            "asset_cfgs": [SceneEntityCfg("stack_object")],
+        },
+    )
 
+    randomize_cube_positions = EventTerm(
+        func=franka_stack_events.randomize_object_pose_use_rot,
+        mode="reset",
+        params={
+            "pose_range": {"x": (0.55, 0.60), "y": (0.05, 0.10), "yaw": (-math.pi / 8, math.pi / 8)},
+            "min_separation": 0.1,
+            "asset_cfgs": [SceneEntityCfg("target_cube")],
+        },
+    )
+    '''
 
 @configclass
 class FrankaStackPottedMeatCanEnvCfg(StackEnvCfg):
@@ -257,14 +277,14 @@ class FrankaStackPottedMeatCanEnvCfg(StackEnvCfg):
             solver_velocity_iteration_count=4,
             max_angular_velocity=1000.0,
             max_linear_velocity=1000.0,
-            max_depenetration_velocity=5.0,
+            max_depenetration_velocity= 1.0,
             disable_gravity=False,
         )
 
         # Set each stacking cube deterministically
         self.scene.stack_object = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/stack_object",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.6, 0.02, 0.03025), rot=(0.7071, 0.7071, 0, 0.0)),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=(0.6, 0.02, 0.05), rot=(0.7071, 0.7071, 0, 0.0)),
             spawn=sim_utils.UsdFileCfg(
                 usd_path=LOCAL_POTTED_MEAT_CAN_USD,
                 rigid_props=cube_properties,

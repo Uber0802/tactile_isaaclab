@@ -67,8 +67,8 @@ params:
     normalize_advantage: True
     gamma: 0.995
     tau: 0.95
-    learning_rate: 5.0e-5
-    lr_schedule: fixed
+    learning_rate: 1.0e-4
+    lr_schedule: adaptive
     schedule_type: standard
     kl_threshold: 0.004
     score_to_win: 200000000
@@ -77,7 +77,7 @@ params:
     save_frequency: 100
     print_stats: True
     grad_norm: 1.0
-    entropy_coef: 0.001
+    entropy_coef: 0.002
     truncate_grads: True
     e_clip: 0.2
     horizon_length: 128
