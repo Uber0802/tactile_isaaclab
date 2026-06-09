@@ -6,7 +6,8 @@
 import math
 import isaaclab.sim as sim_utils
 
-from isaaclab.assets import RigidObjectCfg
+from isaaclab.assets import RigidObjectCfg, ArticulationCfg
+from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import ObservationTermCfg as ObsTerm
@@ -24,25 +25,12 @@ from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensorCfg
 from isaaclab_tasks.manager_based.manipulation.stack import mdp
 from isaaclab_tasks.manager_based.manipulation.stack.mdp import franka_stack_events
 from isaaclab_tasks.manager_based.manipulation.stack.stack_env_cfg import ObservationsCfg, RewardsCfg, StackEnvCfg
+from isaaclab_tasks.manager_based.manipulation.stack.tactile_stack_env_cfg import TactileFrankaStackEnvCfg
 
-##
-# Pre-defined configs
-##
-from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
-from isaaclab_assets.robots.franka import FRANKA_PANDA_CFG # isort: skip
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
 
 LOCAL_ROBOT_USD_PATH = "./franka_gelsight.usd"
 LOCAL_POTTED_MEAT_CAN_USD = "./assets/Props/potted_meat_can_sdf.usd"
-
-
-@configclass
-class GelsightObservationsCfg(ObservationsCfg):
-    """Observation specifications for the Gelsight environment."""
-
-    def __post_init__(self):
-        super().__post_init__()
 
 
 @configclass
@@ -56,7 +44,6 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "max_z_distance": 0.0756,
-            "min_z": 0.0302,
         },
         weight=1.0,
     )
@@ -121,7 +108,7 @@ class EventCfg:
         func=franka_stack_events.set_default_joint_pose,
         mode="reset",
         params={
-            "default_pose": [0.0444, -0.1894, -0.1107, -2.5148, 0.0044, 2.3775, 0.6952, 0.0400, 0.0400],
+            "default_pose": [-0.4536, 0.1362, 0.3922, -2.3182, -0.1029, 2.223, 0.7862, 0.0400, 0.0400],
         },
     )
 
@@ -143,80 +130,13 @@ class EventCfg:
             "asset_cfgs": [SceneEntityCfg("stack_object"), SceneEntityCfg("target_cube")],
         },
     )
-    '''
-    randomize_cube_positions_1 = EventTerm(
-        func=franka_stack_events.randomize_object_pose_use_rot,
-        mode="reset",
-        params={
-            "pose_range": {"x": (0.4, 0.45), "y": (-0.10, -0.05), "yaw": (-math.pi / 8, math.pi / 8)},
-            "min_separation": 0.1,
-            "asset_cfgs": [SceneEntityCfg("stack_object")],
-        },
-    )
-
-    randomize_cube_positions = EventTerm(
-        func=franka_stack_events.randomize_object_pose_use_rot,
-        mode="reset",
-        params={
-            "pose_range": {"x": (0.55, 0.60), "y": (0.05, 0.10), "yaw": (-math.pi / 8, math.pi / 8)},
-            "min_separation": 0.1,
-            "asset_cfgs": [SceneEntityCfg("target_cube")],
-        },
-    )
-    '''
 
 @configclass
-class FrankaStackPottedMeatCanEnvCfg(StackEnvCfg):
+class FrankaStackPottedMeatCanEnvCfg(TactileFrankaStackEnvCfg):
     """Configuration for the Franka Gelsight Environment with Potted Meat Can."""
 
     # Override the observations and rewards
-    observations: GelsightObservationsCfg = GelsightObservationsCfg()
     rewards: GelsightRewardsCfg = GelsightRewardsCfg()
-
-    '''
-    left_tactile_sensor: VisuoTactileSensorCfg = VisuoTactileSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_link/tactile_sensor",
-        update_period=1 / 15,
-        render_cfg=GELSIGHT_R15_CFG,
-        enable_camera_tactile=True,
-        enable_force_field=True,
-        tactile_array_size=(20, 25),
-        tactile_margin=0.003,
-        contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
-        normal_contact_stiffness=1.0,
-        friction_coefficient=2.0,
-        tangential_stiffness=0.1,
-        camera_cfg=TiledCameraCfg(
-            prim_path="{ENV_REGEX_NS}/Robot/left_elastomer_tip_link/cam",
-            update_period=1 / 15,
-            height=GELSIGHT_R15_CFG.image_height,
-            width=GELSIGHT_R15_CFG.image_width,
-            data_types=["distance_to_image_plane"],
-            spawn=None,
-        ),
-    )
-    right_tactile_sensor: VisuoTactileSensorCfg = VisuoTactileSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_link/tactile_sensor",
-        update_period=1 / 15,
-        render_cfg=GELSIGHT_R15_CFG,
-        enable_camera_tactile=True,
-        enable_force_field=True,
-        tactile_array_size=(20, 25),
-        tactile_margin=0.003,
-        contact_object_prim_path_expr="{ENV_REGEX_NS}/stack_object",
-        normal_contact_stiffness=1.0,
-        friction_coefficient=2.0,
-        tangential_stiffness=0.1,
-        camera_cfg=TiledCameraCfg(
-            prim_path="{ENV_REGEX_NS}/Robot/right_elastomer_tip_link/cam",
-            update_period=1 / 15,
-            height=GELSIGHT_R15_CFG.image_height,
-            width=GELSIGHT_R15_CFG.image_width,
-            data_types=["distance_to_image_plane"],
-            spawn=None,
-        ),
-    )
-    '''
 
     def __post_init__(self):
         # post init of parent
@@ -225,114 +145,14 @@ class FrankaStackPottedMeatCanEnvCfg(StackEnvCfg):
         # Set events
         self.events = EventCfg()
 
-        # Set Franka as robot
-        self.scene.robot = FRANKA_PANDA_CFG.replace(
-            prim_path="{ENV_REGEX_NS}/Robot",
-            spawn=sim_utils.UsdFileWithCompliantContactCfg(
-                usd_path=LOCAL_ROBOT_USD_PATH,
-                activate_contact_sensors=True,
-                rigid_props=FRANKA_PANDA_CFG.spawn.rigid_props,
-                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                    enabled_self_collisions=False, solver_position_iteration_count=64, solver_velocity_iteration_count=4
-                ),
-                collision_props=FRANKA_PANDA_CFG.spawn.collision_props,
-                compliant_contact_stiffness=1000.0,
-                compliant_contact_damping=100.0,
-                physics_material_prim_path=[
-                    "left_elastomer_link",
-                    "right_elastomer_link",
-                ],
-            ),
-        )
-        self.scene.robot.spawn.semantic_tags = [("class", "robot")]
-        # Add semantics to table
-        self.scene.table.spawn.semantic_tags = [("class", "table")]
-
-        # Add semantics to ground
-        self.scene.plane.semantic_tags = [("class", "ground")]
-
-        # Add tactile sensors to the scene
-        if hasattr(self, "left_tactile_sensor") and hasattr(self, "right_tactile_sensor"):
-            self.scene.left_tactile_sensor = self.left_tactile_sensor
-            self.scene.right_tactile_sensor = self.right_tactile_sensor
-
-        # Set actions for the specific robot type (franka)
-        self.actions.arm_action = mdp.JointPositionActionCfg(
-            asset_name="robot", joint_names=["panda_joint[1-7]"], scale=0.5, use_default_offset=True
-        )
-        self.actions.gripper_action = mdp.BinaryJointPositionActionCfg(
-            asset_name="robot",
-            joint_names=["panda_finger.*"],
-            open_command_expr={"panda_finger_.*": 0.04},
-            close_command_expr={"panda_finger_.*": 0.0},
-        )
-        # utilities for gripper status check
-        self.gripper_joint_names = ["panda_finger_.*"]
-        self.gripper_open_val = 0.04
-        self.gripper_threshold = 0.005
-
-        # Rigid body properties of each cube (high speed solver parameters)
-        cube_properties = RigidBodyPropertiesCfg(
-            solver_position_iteration_count=64,
-            solver_velocity_iteration_count=4,
-            max_angular_velocity=1000.0,
-            max_linear_velocity=1000.0,
-            max_depenetration_velocity= 1.0,
-            disable_gravity=False,
-        )
-
         # Set each stacking cube deterministically
         self.scene.stack_object = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/stack_object",
             init_state=RigidObjectCfg.InitialStateCfg(pos=(0.6, 0.02, 0.05), rot=(0.7071, 0.7071, 0, 0.0)),
             spawn=sim_utils.UsdFileCfg(
                 usd_path=LOCAL_POTTED_MEAT_CAN_USD,
-                rigid_props=cube_properties,
+                rigid_props=self.cube_properties,
                 articulation_props=sim_utils.ArticulationRootPropertiesCfg(articulation_enabled=False),
                 semantic_tags=[("class", "stack_object")],
             ),
-        )
-
-        self.scene.target_cube = RigidObjectCfg(
-            prim_path="{ENV_REGEX_NS}/target_cube",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.0, 0.00, 0.0203], rot=[1, 0, 0, 0]),
-            spawn=UsdFileCfg(
-                usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/red_block.usd",
-                scale=(1.0, 1.0, 1.0),
-                rigid_props=cube_properties,
-                semantic_tags=[("class", "target_cube")],
-            ),
-        )
-
-        # Listens to the required transforms
-        marker_cfg = FRAME_MARKER_CFG.copy()
-        marker_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
-        marker_cfg.prim_path = "/Visuals/FrameTransformer"
-        self.scene.ee_frame = FrameTransformerCfg(
-            prim_path="{ENV_REGEX_NS}/Robot/panda_link0",
-            debug_vis=False,
-            visualizer_cfg=marker_cfg,
-            target_frames=[
-                FrameTransformerCfg.FrameCfg(
-                    prim_path="{ENV_REGEX_NS}/Robot/panda_hand",
-                    name="end_effector",
-                    offset=OffsetCfg(
-                        pos=[0.0, 0.0, 0.1034],
-                    ),
-                ),
-                FrameTransformerCfg.FrameCfg(
-                    prim_path="{ENV_REGEX_NS}/Robot/panda_rightfinger",
-                    name="tool_rightfinger",
-                    offset=OffsetCfg(
-                        pos=(0.0, 0.0, 0.046),
-                    ),
-                ),
-                FrameTransformerCfg.FrameCfg(
-                    prim_path="{ENV_REGEX_NS}/Robot/panda_leftfinger",
-                    name="tool_leftfinger",
-                    offset=OffsetCfg(
-                        pos=(0.0, 0.0, 0.046),
-                    ),
-                ),
-            ],
         )
