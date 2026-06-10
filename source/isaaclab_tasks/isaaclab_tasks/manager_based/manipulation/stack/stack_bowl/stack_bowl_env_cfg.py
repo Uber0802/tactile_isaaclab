@@ -28,6 +28,7 @@ from isaaclab_tasks.manager_based.manipulation.stack.tactile_stack_env_cfg impor
 
 LOCAL_ROBOT_USD_PATH = "./franka_gelsight.usd"
 LOCAL_BOWL_USD = "./assets/Props/bowl_sdf.usd"
+LOCAL_RED_BLOCK_USD   = "./assets/Props/red_block_sdf.usd"
 
 
 @configclass
@@ -40,7 +41,7 @@ class GelsightRewardsCfg(RewardsCfg):
         func=mdp.stack_object_z_reward_exp,
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
-            "max_z_distance": 0.072,
+            "max_z_distance": 0.1188,
         },
         weight=1.0,
     )
@@ -63,7 +64,7 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0374,
+            "stack_height_offset": 0.06,
             "height_tolerance": 0.02,
             "distance_offset": 0.1,
             "decay_rate": 30.0,
@@ -76,8 +77,8 @@ class GelsightRewardsCfg(RewardsCfg):
         params={
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "stack_height_offset": 0.0374,
-            "height_tolerance": 0.005,
+            "stack_height_offset": 0.06,
+            "height_tolerance": 0.02,
             "penalty_scale": 5.0,
         },
         weight=-1.0,
@@ -89,7 +90,8 @@ class GelsightRewardsCfg(RewardsCfg):
             "robot_cfg": SceneEntityCfg("robot"),
             "stack_object_cfg": SceneEntityCfg("stack_object"),
             "target_cube_cfg": SceneEntityCfg("target_cube"),
-            "height_diff": 0.0374,
+            "height_diff": 0.06,
+            "height_threshold": 0.02,
         },
         weight=10.0,
     )
@@ -122,5 +124,16 @@ class FrankaStackBowlEnvCfg(TactileFrankaStackEnvCfg):
             spawn=sim_utils.UsdFileCfg(
                 usd_path=LOCAL_BOWL_USD,
                 rigid_props=self.cube_properties,
+            ),
+        )
+
+        self.scene.target_cube = RigidObjectCfg(
+            prim_path="{ENV_REGEX_NS}/target_cube",
+            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.55, 0.05, 0.0203], rot=[1, 0, 0, 0]),
+            spawn=UsdFileCfg(
+                usd_path=LOCAL_RED_BLOCK_USD,
+                scale=(1.0, 1.0, 2.0),
+                rigid_props=self.cube_properties,
+                semantic_tags=[("class", "target_cube")],
             ),
         )
