@@ -37,6 +37,17 @@ class GelsightRewardsCfg(RewardsCfg):
 
     rewind_tactile_reward = RewTerm(func=mdp.rewind_tactile_reward, weight=1)
 
+    ee_to_stack_object = RewTerm(
+        func=mdp.ee_to_stack_object_circumference_distance_reward,
+        params={
+            "ee_frame_cfg": SceneEntityCfg("ee_frame"),
+            "stack_object_cfg": SceneEntityCfg("stack_object"),
+            "max_distance": 0.25,
+            "max_reward": 1.0,
+        },
+        weight=0.5,
+    )
+
     stack_object_z_reward_exp = RewTerm(
         func=mdp.stack_object_z_reward_exp,
         params={

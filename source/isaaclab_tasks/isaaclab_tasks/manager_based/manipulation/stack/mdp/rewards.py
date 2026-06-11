@@ -117,6 +117,34 @@ def rewind_tactile_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
     return torch.zeros(env.num_envs, device=env.device)
 
 
+def ee_to_stack_object_circumference_distance_reward(
+    env: ManagerBasedRLEnv,
+    ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
+    stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
+    max_distance: float = 0.6,
+    max_reward: float = 1.0,
+    object_radius: float = 0.036,
+) -> torch.Tensor:
+    """Encourage the end-effector to move close to the stack object's surface."""
+
+    ee_frame: FrameTransformer = env.scene[ee_frame_cfg.name]
+    stack_object = env.scene[stack_object_cfg.name]
+
+    ee_pos = ee_frame.data.target_pos_w[:, 0, :]
+    stack_object_pos = _get_pos(stack_object)
+    xy_center_distance = torch.linalg.vector_norm(ee_pos[:, :2] - stack_object_pos[:, :2], dim=1)
+    dz = ee_pos[:, 2] - stack_object_pos[:, 2]
+    distance = torch.sqrt((xy_center_distance - object_radius) ** 2 + dz ** 2)
+    shaped_reward = torch.clamp(1.0 - (distance / max_distance), min=0.0, max=1.0) * max_reward
+
+    # _maybe_visualize_ee_pos(env, ee_pos + torch.tensor([object_radius * 2, 0, 0], device=ee_pos.device))
+    # _maybe_visualize_stack_target(env, stack_object_pos + torch.tensor([object_radius, 0, 0], device=ee_pos.device), 0.5, marker_name="cube_1", color=(0.0, 0.35, 1.0))
+    # _maybe_visualize_stack_target(env, stack_object_pos + torch.tensor([-object_radius, 0, 0], device=ee_pos.device), 0.5, marker_name="cube_2", color=(0.0, 0.35, 1.0))
+
+
+
+    return shaped_reward
+
 def ee_to_stack_object_distance_reward(
     env: ManagerBasedRLEnv,
     ee_frame_cfg: SceneEntityCfg = SceneEntityCfg("ee_frame"),
@@ -157,7 +185,6 @@ def stack_object_z_reward_exp(
     reward = torch.clamp(reward, min=0.0)
 
     # _maybe_visualize_stack_target(env, stack_object_pos, 0.5, marker_name="cube_1", color=(0.0, 0.35, 1.0))
-
 
     return reward
 
