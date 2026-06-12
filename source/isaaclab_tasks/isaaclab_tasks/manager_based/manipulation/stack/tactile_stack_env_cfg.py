@@ -171,13 +171,13 @@ class TactileFrankaStackEnvCfg(StackEnvCfg):
                     max_linear_velocity=1000.0,
                     max_angular_velocity=3666.0,
                     enable_gyroscopic_forces=True,
-                    solver_position_iteration_count=192,
+                    solver_position_iteration_count=64,
                     solver_velocity_iteration_count=1,
                     max_contact_impulse=1e32,
                 ),
                 articulation_props=sim_utils.ArticulationRootPropertiesCfg(
                     enabled_self_collisions=False,
-                    solver_position_iteration_count=192,
+                    solver_position_iteration_count=64,
                     solver_velocity_iteration_count=1,
                     fix_root_link=True,
                 ),
@@ -221,7 +221,7 @@ class TactileFrankaStackEnvCfg(StackEnvCfg):
                     joint_names_expr=["panda_finger_joint[1-2]"],
                     effort_limit_sim=200.0,
                     velocity_limit_sim=0.05,
-                    stiffness=7500.0,
+                    stiffness=4000.0,
                     damping=173.0,
                     friction=0.1,
                     armature=0.0,
@@ -263,7 +263,7 @@ class TactileFrankaStackEnvCfg(StackEnvCfg):
 
         # Rigid body properties of each cube
         self.cube_properties = RigidBodyPropertiesCfg(
-            solver_position_iteration_count=16,
+            solver_position_iteration_count=64,
             solver_velocity_iteration_count=1,
             max_angular_velocity=1000.0,
             max_linear_velocity=1000.0,
