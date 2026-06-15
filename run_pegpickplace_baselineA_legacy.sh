@@ -20,13 +20,13 @@ TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
     --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
     --baseline A_legacy \
     --headless \
-    --seed 1 \
     --num_envs 128 \
+    --seed 2 \
     --max_iterations 10000 \
     --enable_cameras \
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name PegInsert_PickPlace_baselineA_legacy_seed1 \
-    agent.params.config.full_experiment_name=PegInsert_PickPlace_baselineA_legacy_seed1 \
-    agent.params.config.save_frequency=20
+    --wandb-name PegInsert_PickPlace_baselineA_legacy_seed2 \
+    agent.params.config.full_experiment_name=PegInsert_PickPlace_baselineA_legacy_seed2 \
+    agent.params.config.save_frequency=200

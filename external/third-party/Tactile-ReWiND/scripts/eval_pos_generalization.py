@@ -118,7 +118,6 @@ def load_episodes(data_dirs: list[str], limit: int | None, seed: int = 42):
         try:
             raw = np.load(p, allow_pickle=True)
             d = raw.item() if (raw.dtype == object and raw.ndim == 0) else raw
-            d["Task"] = "grasp the blue box and stack it on the red box"
         except Exception:
             skipped += 1; continue
         if not isinstance(d, dict):

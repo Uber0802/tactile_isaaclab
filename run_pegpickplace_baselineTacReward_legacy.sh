@@ -25,10 +25,10 @@ FORGE_TACTILE_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-part
     --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
     --baseline A_legacy \
     --headless \
-    --num_envs 128 \
-    --seed 2 \
+    --num_envs 256 \
     --max_iterations 10000 \
     --enable_cameras \
+    --seed 2 \
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \

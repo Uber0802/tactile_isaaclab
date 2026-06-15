@@ -212,9 +212,11 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         #   - `-1.0` (2mm): tactile hit success trivially, no headroom for ablation
         # 2026-05-25: bumped back to -3 — tactile+yaw_diff_obs+sharp_xy reward
         # changes should now give tactile enough signal to crack the harder depth.
+        # 2026-06-09: trying -4 (8mm) — push depth one more pitch to widen the
+        # success/fail tactile gap; revert to -3 if baseline can't crack it.
         # Combined with the shifted z reward (forge_nutpickplace_env._get_rewards),
         # the dense `r_descent` / `r_z_descend` peaks at z_disp = -6mm.
-        self.task.success_threshold = -3.0
+        self.task.success_threshold = -3.5
         # Remove the "rotate-one-direction-only" hardware constraint. By default
         # nut_thread sets unidirectional_rot=True, which silently clamps any
         # commanded positive delta_yaw to 0 — meaning the wrist can only ever
