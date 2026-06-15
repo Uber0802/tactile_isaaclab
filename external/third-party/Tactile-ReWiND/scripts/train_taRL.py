@@ -101,7 +101,8 @@ class Data3Dataset(Dataset):
     def __init__(self, eps: List[dict], indices: List[int], text_embs: np.ndarray,
                  max_length: int = 16, batch_size: int = 64, steps_per_epoch: int = 100,
                  rewind_ratio: float = 0.5, success_prob: float = 0.5,
-                 normalize_mode: str = "off", seed: int = 0):
+                 normalize_mode: str = "off", seed: int = 0,
+                 zero_contact_prob: float = 0.0):
         if normalize_mode not in ("off", "global", "per_channel"):
             raise ValueError(f"normalize_mode must be off|global|per_channel, "
                              f"got {normalize_mode!r}")
@@ -117,6 +118,7 @@ class Data3Dataset(Dataset):
         self.rewind_ratio = rewind_ratio
         self.success_prob = success_prob
         self.normalize_mode = normalize_mode
+        self.zero_contact_prob = float(zero_contact_prob)
         self._succ_idx = [i for i in indices if eps[i]["success"] == 1]
         self._fail_idx = [i for i in indices if eps[i]["success"] == 0]
         if not self._succ_idx or not self._fail_idx:
@@ -180,6 +182,20 @@ class Data3Dataset(Dataset):
         return idx, prog
 
     def __getitem__(self, _):
+        # Zero-contact augmentation: emit an all-zero tactile sample with
+        # target=0 to teach the model "no contact = no progress". This makes the
+        # inference scenario where an early RL policy never touches the object
+        # (tactile field ≈ 0) in-distribution instead of OOD noise.
+        if self.zero_contact_prob > 0 and self._rng.random() < self.zero_contact_prob:
+            frames = torch.zeros(self.max_length, 3, 40, 25, dtype=torch.float32)
+            t_idx = self._rng.randrange(self.text_embs.shape[0])
+            prog = torch.zeros(self.max_length, dtype=torch.float32)
+            return {
+                "video_array": frames,
+                "text_array": torch.from_numpy(self.text_embs[t_idx]),
+                "progress": prog,
+                "class_label": torch.zeros(self.max_length, dtype=torch.float32),
+            }
         is_success = self._rng.random() < self.success_prob
         pool = self._succ_idx if is_success else self._fail_idx
         ep = self.eps[self._rng.choice(pool)]
@@ -369,6 +385,11 @@ def main():
     ap.add_argument("--success_prob", type=float, default=0.5,
                     help="Probability of drawing a success episode (vs fail) per sample. "
                          "0.5 = class-balanced regardless of base rate.")
+    ap.add_argument("--zero_contact_prob", type=float, default=0.0,
+                    help="Probability of emitting an all-zero tactile sample with "
+                         "target=0. Teaches the model 'no contact = no progress' so "
+                         "early-RL policies that never touch the object stay in "
+                         "the training distribution. 0.10–0.20 is a sensible range.")
     ap.add_argument("--max_length", type=int, default=16)
     ap.add_argument("--normalize", choices=["off", "global", "per_channel", "inherit"],
                     default="inherit",
@@ -442,6 +463,11 @@ def main():
             print(f"  skip {p}: {e}", file=sys.stderr)
             continue
         tac = d["Tactile"]
+        # kimnai/curriculum-style data is (T, 20, 25, 6) with channel order
+        # (fz_L, fx_L, fy_L, fz_R, fx_R, fy_R). Reshape to bimanual
+        # (T, 40, 25, 3) with left hand on top, right on bottom.
+        if tac.ndim == 4 and tac.shape[1:] == (20, 25, 6):
+            tac = np.concatenate([tac[..., :3], tac[..., 3:]], axis=1)
         if tac.ndim != 4 or tac.shape[1:] != (40, 25, 3):
             continue
         # Use the full path as the identifier so the same basename across
@@ -476,8 +502,10 @@ def main():
         max_length=args.max_length, batch_size=args.batch_size,
         steps_per_epoch=args.steps_per_epoch, rewind_ratio=args.rewind_ratio,
         success_prob=args.success_prob, normalize_mode=normalize_mode,
-        seed=args.seed,
+        seed=args.seed, zero_contact_prob=args.zero_contact_prob,
     )
+    if args.zero_contact_prob > 0:
+        print(f"[finetune] zero_contact augmentation: p={args.zero_contact_prob:.2f}")
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, num_workers=args.num_workers,
         shuffle=False, pin_memory=True, drop_last=True,

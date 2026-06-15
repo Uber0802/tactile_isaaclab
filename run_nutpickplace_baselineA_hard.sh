@@ -23,8 +23,9 @@ FORGE_SKIP_TACTILE_SENSORS=1 \
     --num_envs 256 \
     --max_iterations 10000 \
     --track \
+    --seed 2 \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name NutThread_PickPlace_baselineA_hard_success_-3 \
-    agent.params.config.full_experiment_name=NutThread_PickPlace_baselineA_hard_success_-3 \
-    agent.params.config.save_frequency=20
+    --wandb-name NutThread_PickPlace_baselineA_hard_success_-3.5_seed2 \
+    agent.params.config.full_experiment_name=NutThread_PickPlace_baselineA_hard_success_-3.5_seed2 \
+    agent.params.config.save_frequency=500
