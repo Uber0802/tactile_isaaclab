@@ -30,7 +30,7 @@ from isaaclab_tasks.manager_based.manipulation.stack.stack_env_cfg import Observ
 from isaaclab.markers.config import FRAME_MARKER_CFG  # isort: skip
 from isaaclab_assets.robots.franka import FRANKA_PANDA_CFG, FRANKA_PANDA_HIGH_PD_CFG  # isort: skip
 
-LOCAL_PEG_INSERT_ROBOT_USD_PATH = "./franka_gelsight.usd"
+LOCAL_ROBOT_USD_PATH = "./franka_gelsight.usd"
 LOCAL_BLUE_BLOCK_USD  = "./assets/Props/blue_block_sdf.usd"
 LOCAL_RED_BLOCK_USD   = "./assets/Props/red_block_sdf.usd"
 LOCAL_GREEN_BLOCK_USD = "./assets/Props/green_block_sdf.usd"
@@ -157,6 +157,7 @@ class TactileFrankaStackEnvCfg(StackEnvCfg):
         # Set events
         self.events = EventCfg()
 
+        '''
         # Set Franka as robot
         self.scene.robot = ArticulationCfg(
             prim_path="{ENV_REGEX_NS}/Robot",
@@ -171,13 +172,13 @@ class TactileFrankaStackEnvCfg(StackEnvCfg):
                     max_linear_velocity=1000.0,
                     max_angular_velocity=3666.0,
                     enable_gyroscopic_forces=True,
-                    solver_position_iteration_count=64,
+                    solver_position_iteration_count=32,
                     solver_velocity_iteration_count=1,
                     max_contact_impulse=1e32,
                 ),
                 articulation_props=sim_utils.ArticulationRootPropertiesCfg(
                     enabled_self_collisions=False,
-                    solver_position_iteration_count=64,
+                    solver_position_iteration_count=32,
                     solver_velocity_iteration_count=1,
                     fix_root_link=True,
                 ),
@@ -221,12 +222,69 @@ class TactileFrankaStackEnvCfg(StackEnvCfg):
                     joint_names_expr=["panda_finger_joint[1-2]"],
                     effort_limit_sim=200.0,
                     velocity_limit_sim=0.05,
-                    stiffness=4000.0,
+                    stiffness=2000.0,
                     damping=173.0,
                     friction=0.1,
                     armature=0.0,
                 ),
             },
+        )
+        '''
+        solver_count = 48
+        self.scene.robot = ArticulationCfg(
+            prim_path="{ENV_REGEX_NS}/Robot",
+            spawn=sim_utils.UsdFileCfg(
+                usd_path=LOCAL_ROBOT_USD_PATH,
+                activate_contact_sensors=True,
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    disable_gravity=False,
+                    max_depenetration_velocity=5.0,
+                    linear_damping=0.0,
+                    angular_damping=0.0,
+                    max_linear_velocity=1000.0,
+                    max_angular_velocity=3666.0,
+                    enable_gyroscopic_forces=True,
+                    solver_position_iteration_count=solver_count,
+                    solver_velocity_iteration_count=4,
+                    max_contact_impulse=1e32,
+                ),
+                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
+                    enabled_self_collisions=False, solver_position_iteration_count=solver_count, solver_velocity_iteration_count=4
+                ),
+            ),
+            init_state=ArticulationCfg.InitialStateCfg(
+                joint_pos={
+                    "panda_joint1": 0.0,
+                    "panda_joint2": -0.569,
+                    "panda_joint3": 0.0,
+                    "panda_joint4": -2.810,
+                    "panda_joint5": 0.0,
+                    "panda_joint6": 3.037,
+                    "panda_joint7": 0.741,
+                    "panda_finger_joint.*": 0.04,
+                },
+            ),
+            actuators={
+                "panda_shoulder": ImplicitActuatorCfg(
+                    joint_names_expr=["panda_joint[1-4]"],
+                    effort_limit_sim=87.0,
+                    stiffness=80.0,
+                    damping=4.0,
+                ),
+                "panda_forearm": ImplicitActuatorCfg(
+                    joint_names_expr=["panda_joint[5-7]"],
+                    effort_limit_sim=12.0,
+                    stiffness=80.0,
+                    damping=4.0,
+                ),
+                "panda_hand": ImplicitActuatorCfg(
+                    joint_names_expr=["panda_finger_joint.*"],
+                    effort_limit_sim=200.0,
+                    stiffness=2e3,
+                    damping=1e2,
+                ),
+            },
+            soft_joint_pos_limit_factor=1.0,
         )
         self.scene.robot.spawn.semantic_tags = [("class", "robot")]
 
@@ -263,8 +321,8 @@ class TactileFrankaStackEnvCfg(StackEnvCfg):
 
         # Rigid body properties of each cube
         self.cube_properties = RigidBodyPropertiesCfg(
-            solver_position_iteration_count=64,
-            solver_velocity_iteration_count=1,
+            solver_position_iteration_count=solver_count,
+            solver_velocity_iteration_count=4,
             max_angular_velocity=1000.0,
             max_linear_velocity=1000.0,
             max_depenetration_velocity=5.0,

@@ -205,6 +205,9 @@ class StackTactileEnv(ManagerBasedRLEnv):
         self._tactile_smoothed_progress = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float32,
         )
+        self._tactile_max_progress = torch.zeros(
+            self.num_envs, device=self.device, dtype=torch.float32,
+        )
         self._tactile_reward_enabled = True
         
         self._tactile_target_env = int(os.getenv("FORGE_TACTILE_REWARD_LOG_ENV", "0"))
@@ -304,7 +307,17 @@ class StackTactileEnv(ManagerBasedRLEnv):
                 latest[self._tactile_target_env].item(),
                 out[self._tactile_target_env].item(),
             ))
-        return out * self._tactile_reward_scale
+        # out = torch.where(out < 0.05, torch.zeros_like(out), out)
+        
+        # Calculate max-potential-based delta reward
+        if not hasattr(self, "_tactile_max_progress"):
+            self._tactile_max_progress = torch.zeros_like(out)
+            
+        # Only reward when the agent reaches a new highest progress
+        delta_progress = torch.clamp(out - self._tactile_max_progress, min=0.0)
+        self._tactile_max_progress = torch.maximum(self._tactile_max_progress, out)
+
+        return delta_progress * self._tactile_reward_scale
 
     def _save_tactile_progress_curve(self) -> None:
         """Dump the current `_tactile_progress_history` to disk as a PNG."""
@@ -552,6 +565,8 @@ class StackTactileEnv(ManagerBasedRLEnv):
             self._tactile_buffer[env_ids] = 0.0
             self._tactile_step_count[env_ids] = 0
             self._tactile_smoothed_progress[env_ids] = 0.0
+            if hasattr(self, "_tactile_max_progress"):
+                self._tactile_max_progress[env_ids] = 0.0
 
     def close(self):
         if self._save_tactile_force_field:
