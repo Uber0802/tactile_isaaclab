@@ -246,11 +246,11 @@ class StackEnvCfg(ManagerBasedRLEnvCfg):
     def __post_init__(self):
         """Post initialization."""
         # general settings
-        self.decimation = 8
+        self.decimation = 5
         self.episode_length_s = 10.0
         # simulation settings
-        self.sim.dt = 1 / 120
-        self.sim.render_interval = 8
+        self.sim.dt = 1 / 100
+        self.sim.render_interval = 5
 
         self.sim.physx.bounce_threshold_velocity = 0.2
         self.sim.physx.bounce_threshold_velocity = 0.01

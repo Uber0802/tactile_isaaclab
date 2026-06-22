@@ -7,7 +7,8 @@ FORGE_TACTILE_REWARD_INSTRUCTION="grasp the potted meat can and stack it on the 
     --num_envs 256 \
     --max_iterations 10000 \
     --enable_cameras \
+    --headless \
     --track \
     --wandb-entity b06902045-national-taiwan-university \
     --wandb-project-name tactile-rewind \
-    --wandb-name Stack_meat_can_baselineA
+    --wandb-name Stack_meat_can_baselineA_kl_decimation
