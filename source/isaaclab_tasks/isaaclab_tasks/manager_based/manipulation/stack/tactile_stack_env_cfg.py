@@ -70,7 +70,7 @@ class EventCfg:
         func=franka_stack_events.set_default_joint_pose,
         mode="reset",
         params={
-            "default_pose": [-0.4536, 0.1362, 0.3922, -2.3182, -0.1029, 2.223, 0.7862, 0.0400, 0.0400],
+            "default_pose": [0.0444, -0.1894, -0.1107, -2.5148, 0.0044, 2.3775, 0.6952, 0.0400, 0.0400],
         },
     )
 
@@ -233,7 +233,7 @@ class TactileFrankaStackEnvCfg(StackEnvCfg):
         solver_count = 48
         self.scene.robot = ArticulationCfg(
             prim_path="{ENV_REGEX_NS}/Robot",
-            spawn=sim_utils.UsdFileCfg(
+            spawn=sim_utils.UsdFileWithCompliantContactCfg(
                 usd_path=LOCAL_ROBOT_USD_PATH,
                 activate_contact_sensors=True,
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
@@ -251,6 +251,12 @@ class TactileFrankaStackEnvCfg(StackEnvCfg):
                 articulation_props=sim_utils.ArticulationRootPropertiesCfg(
                     enabled_self_collisions=False, solver_position_iteration_count=solver_count, solver_velocity_iteration_count=4
                 ),
+                compliant_contact_stiffness=1000.0,
+                compliant_contact_damping=100.0,
+                physics_material_prim_path=[
+                    "left_elastomer_link",
+                    "right_elastomer_link",
+                ],
             ),
             init_state=ArticulationCfg.InitialStateCfg(
                 joint_pos={

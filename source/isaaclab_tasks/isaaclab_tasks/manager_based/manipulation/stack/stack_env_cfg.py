@@ -257,13 +257,7 @@ class StackEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.physx.gpu_found_lost_aggregate_pairs_capacity = 1024 * 1024 * 4
         self.sim.physx.gpu_total_aggregate_pairs_capacity = 16 * 1024
         self.sim.physx.gpu_collision_stack_size = 2**30
-        self.sim.physx.friction_offset_threshold = 0.01
         self.sim.physx.friction_correlation_distance = 0.00625
-        self.sim.physx.max_position_iteration_count = 192
-        self.sim.physx.max_velocity_iteration_count = 1
-        self.sim.physx.gpu_max_rigid_contact_count = 2**23
-        self.sim.physx.gpu_max_rigid_patch_count = 2**23
-        self.sim.physx.gpu_max_num_partitions = 1
 
         self.observations.rgb_camera = None
         self.observations.policy.concatenate_terms = True
