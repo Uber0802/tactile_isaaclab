@@ -49,6 +49,7 @@ class StackTactileEnv(ManagerBasedRLEnv):
         # Success tracking
         self.ep_succeeded = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self.pending_episode_successes = torch.ones(self.num_envs, dtype=torch.long, device=self.device) * -1
+        self.pending_episode_successes_at_end = torch.ones(self.num_envs, dtype=torch.long, device=self.device) * -1
         self.env_episode_index = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
 
         # Tactile saving settings (mirrored from ForgeEnv)
@@ -507,18 +508,27 @@ class StackTactileEnv(ManagerBasedRLEnv):
              term_idx = self.reward_manager.active_terms.index("stack_success")
              success_reward = self.reward_manager._step_reward[:, term_idx]
              self.ep_succeeded |= (success_reward > 0)
+             curr_successes = (success_reward > 0)
+        else:
+             curr_successes = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
         self._save_env0_tactile_force_field()
 
         if torch.any(self.reset_buf):
             reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
             self.pending_episode_successes[reset_env_ids] = self.ep_succeeded[reset_env_ids].long()
+            self.pending_episode_successes_at_end[reset_env_ids] = curr_successes[reset_env_ids].long()
             self.env_episode_index[reset_env_ids] += 1
 
             if (self.pending_episode_successes >= 0).all():
                 episode_success_rate = self.pending_episode_successes.float().mean()
                 self.extras["episode_success_rate"] = episode_success_rate.item()
                 self.pending_episode_successes.fill_(-1)
+
+            if (self.pending_episode_successes_at_end >= 0).all():
+                episode_success_rate_at_end = self.pending_episode_successes_at_end.float().mean()
+                self.extras["episode_success_rate_at_end"] = episode_success_rate_at_end.item()
+                self.pending_episode_successes_at_end.fill_(-1)
             
             # Reset ep_succeeded for next episode
             self.ep_succeeded[reset_env_ids] = False
