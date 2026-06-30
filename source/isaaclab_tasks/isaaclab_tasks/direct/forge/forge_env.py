@@ -311,6 +311,23 @@ class ForgeEnv(FactoryEnv):
         )
         self._tactile_reward_scale = float(
             os.getenv("FORGE_TACTILE_REWARD_SCALE", "1.0"))
+        # Optional linear annealing of the tactile reward scale over training.
+        # Lets the tactile bonus bootstrap early learning, then fade so the
+        # policy converges on the task reward alone (helps when tactile speeds
+        # up learning but caps final success — see nut A_hard_success).
+        #   FORGE_TACTILE_REWARD_SCALE_END   target scale (default = start = no anneal)
+        #   FORGE_TACTILE_REWARD_ANNEAL_STEPS env control-steps over which to ramp
+        #                                     start -> end (default 0 = disabled).
+        #                                     1 PPO iter = horizon_length control
+        #                                     steps (nut horizon=256), so e.g.
+        #                                     anneal over 3000 iters => 3000*256.
+        # scale(t) = start + (end-start) * clamp(t / anneal_steps, 0, 1)
+        self._tactile_reward_scale_start = self._tactile_reward_scale
+        self._tactile_reward_scale_end = float(
+            os.getenv("FORGE_TACTILE_REWARD_SCALE_END", str(self._tactile_reward_scale)))
+        self._tactile_reward_anneal_steps = int(
+            os.getenv("FORGE_TACTILE_REWARD_ANNEAL_STEPS", "0"))
+        self._tactile_anneal_step = 0
         # EMA smoothing on the per-env tactile progress to filter out single-
         # frame spikes. Update rule per env step:
         #   smoothed = alpha * raw + (1 - alpha) * smoothed_prev
@@ -342,10 +359,16 @@ class ForgeEnv(FactoryEnv):
         except Exception:
             self._tactile_curve_log_dir = None
             curve_log_msg = "  curve_log=DISABLED"
+        if self._tactile_reward_anneal_steps > 0:
+            anneal_msg = (f"  ANNEAL {self._tactile_reward_scale_start}->"
+                          f"{self._tactile_reward_scale_end} over "
+                          f"{self._tactile_reward_anneal_steps} steps")
+        else:
+            anneal_msg = ""
         print(f"[TactileReward] enabled  ckpt={ckpt}  scale={self._tactile_reward_scale}  "
               f"instruction={instruction!r}  history={self._tactile_history_length}  "
               f"normalize={self._tactile_normalize_mode}  "
-              f"smooth_alpha={self._tactile_reward_smooth_alpha}{curve_log_msg}")
+              f"smooth_alpha={self._tactile_reward_smooth_alpha}{anneal_msg}{curve_log_msg}")
 
     def _init_visual_reward(self):
         """Optional dense reward bonus from a ReWiND visual model ckpt.
@@ -664,6 +687,14 @@ class ForgeEnv(FactoryEnv):
                 latest[self._tactile_target_env].item(),
                 out[self._tactile_target_env].item(),
             ))
+        # Linear anneal of the scale (no-op when anneal_steps <= 0 or end == start).
+        if self._tactile_reward_anneal_steps > 0:
+            frac = min(1.0, self._tactile_anneal_step / self._tactile_reward_anneal_steps)
+            self._tactile_reward_scale = (
+                self._tactile_reward_scale_start
+                + (self._tactile_reward_scale_end - self._tactile_reward_scale_start) * frac
+            )
+            self._tactile_anneal_step += 1
         return out * self._tactile_reward_scale
 
     def _save_tactile_progress_curve(self) -> None:

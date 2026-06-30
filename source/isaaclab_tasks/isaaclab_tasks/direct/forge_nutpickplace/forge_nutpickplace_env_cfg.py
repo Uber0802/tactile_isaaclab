@@ -103,127 +103,47 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
     # (B, C, D, E, ...) are dispatched here without touching A's code path.
     # ------------------------------------------------------------------
     def apply_baseline(self, baseline: str) -> None:
-        if baseline == "A":
-            return
-        if baseline == "A_hard":
-            self._apply_baseline_A_hard()
-            return
-        if baseline == "A_hard_success":
-            self._apply_baseline_A_hard_success()
-            return
-        if baseline == "B":
-            self._apply_baseline_B()
-            return
-        if baseline == "B2":
-            self._apply_baseline_B2()
+        if baseline == "baseline":
+            self._apply_baseline_baseline()
             return
         if baseline == "single_pos":
             self._apply_baseline_single_pos()
             return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskNutThreadPickPlaceCfg. "
-            f"Implemented: A (frozen), A_hard (A obs + yaw_reward=0 + wider pose noise), "
-            f"A_hard_success (A_hard + success requires one thread pitch deep), "
-            f"B (tactile force fields), "
-            f"B2 (frozen ReWiND CNN -> 768-dim embedding), "
-            f"single_pos (A obs + all reset position randomization zeroed)."
+            f"Implemented: baseline (yaw_reward=0 + wider pose noise + nut threaded "
+            f"~3.5 pitches deep for success, bidirectional rotation), "
+            f"single_pos (baseline obs + all reset randomization zeroed)."
         )
 
-    def _apply_baseline_B(self) -> None:
-        """Baseline B: feed the (left, right) GelSight force fields (normal + shear)
-        to both actor and critic. Matches the (T, 40, 25, 3) layout that gets saved
-        to disk by FORGE_SAVE_TACTILE_FORCE_FIELD: 1500 dims per side
-        (500 normal + 1000 shear), 3000 dims total.
+    def _apply_baseline_baseline(self) -> None:
+        """baseline (was A_hard_success): cut the dense yaw shaping, widen the
+        initial pose randomization, and tighten the success criterion so the nut
+        must be threaded several pitches deep — the regime where tactile reward
+        has measurable room to help over the no-tactile policy.
+
+          - `yaw_reward_scale = 0.0`: remove `r_yaw = xy_coarse * yaw_progress`;
+            the policy must learn the wrist-yaw<0 success condition from the
+            sparse `curr_success` bonus alone.
+          - Wider hand init (2cm→8cm xy, 1cm→3cm z) and bolt init (5cm→10cm xy,
+            +3cm z) so transport can't lean on hard-coded heuristics.
+          - `success_threshold = -3.5`: factory's z check is
+            `z_disp < thread_pitch * success_threshold`; with thread_pitch=2mm
+            the nut must reach target_z - 7mm (~3.5 wrist revolutions past
+            engagement) — the phase where tactile patterns (engaged vs slipping
+            vs jamming) differ most. The dense r_descent/r_z_descend peaks at
+            z_disp = -6mm (forge_nutpickplace_env._get_rewards).
+          - `unidirectional_rot = False`: drop the hardware constraint that
+            silently clamps positive delta_yaw, so the policy must learn which
+            direction to rotate rather than drifting negative for free.
         """
-        rows, cols = self.left_tactile_sensor.tactile_array_size  # (20, 25)
-        num_pts = rows * cols
-        normal_dim = num_pts          # flat (B, num_pts)
-        shear_dim = num_pts * 2       # flat (B, num_pts*2)
-        tactile_dims = {
-            "left_tactile_normal_force": normal_dim,
-            "right_tactile_normal_force": normal_dim,
-            "left_tactile_shear_force": shear_dim,
-            "right_tactile_shear_force": shear_dim,
-        }
-        OBS_DIM_CFG.update(tactile_dims)
-        STATE_DIM_CFG.update(tactile_dims)
-
-        tactile_keys = [
-            "left_tactile_normal_force",
-            "right_tactile_normal_force",
-            "left_tactile_shear_force",
-            "right_tactile_shear_force",
-        ]
-        # Keep the relative order of A's existing entries; just append tactile.
-        self.obs_order = list(self.obs_order) + tactile_keys
-        self.state_order = list(self.state_order) + tactile_keys
-
-    def _apply_baseline_A_hard(self) -> None:
-        """A_hard: same obs/state as A, but the dense yaw shaping is cut and the
-        initial pose randomization is widened. Designed as a "shaping-insufficient"
-        regime to test whether tactile reward can provide learning signal that
-        baselineA's dense gradients otherwise supplied.
-
-        Changes vs A:
-          - `yaw_reward_scale = 0.0`: removes `r_yaw = xy_coarse * yaw_progress`
-            (~0.5 reward contribution near bolt). Policy now has to learn the
-            wrist-yaw < 0 success condition from the sparse `curr_success` bonus
-            alone — yaw exploration was the part that baselineA-with-yaw-reward
-            cracked early; this should slow `success` emergence dramatically.
-          - Wider hand init: 2cm→8cm xy, 1cm→3cm z. Policy has to localise the
-            nut from a much larger initial offset distribution.
-          - Wider bolt init: 5cm→10cm xy, +3cm z noise. Bolt position varies
-            more, breaking any hard-coded transport heuristics.
-        """
-        # Reward shaping ablation.
+        # Yaw shaping ablation + wider initial randomization.
         self.task.yaw_reward_scale = 0.0
-        # Wider initial randomization.
         self.task.hand_init_pos_noise = [0.08, 0.08, 0.03]
         self.task.fixed_asset_init_pos_noise = [0.10, 0.10, 0.03]
-        # (hand_init_orn_noise yaw=1.57 rad and fixed_asset_init_orn_range_deg=360
-        # are already at their wide defaults; no override needed.)
-
-    def _apply_baseline_A_hard_success(self) -> None:
-        """A_hard_success: A_hard ablations PLUS a much tighter success criterion
-        that requires the nut to be threaded 5 full thread pitches deep onto
-        the bolt — roughly halfway between the original "barely touching" target
-        and the physical bottom (nut sitting on bolt head, ~11 pitches deep).
-
-        Stacks on top of A_hard:
-          - `success_threshold = -5.0`: factory's z check is
-            `z_disp < thread_pitch * success_threshold`. With thread_pitch=2mm
-            and success_threshold=-5.0, the nut must reach target_z - 10mm —
-            i.e. threaded 5 full revolutions of the wrist past the initial
-            engagement point. Original +0.375 allowed "barely touching" (0.75mm
-            above target) to count. This version requires sustained
-            negative-yaw rotation to drive the nut down ~half the bolt shank,
-            which is the phase where tactile patterns (engaged threads vs
-            slipping vs jamming) differ most strongly between success and fail
-            trajectories.
-        """
-        # Reuse all A_hard ablations.
-        self._apply_baseline_A_hard()
-        # Tighter success: nut threaded 3 full thread pitches (~6mm) deep —
-        # policy must sustain ~3 full wrist-yaw revolutions past initial
-        # engagement. Iteration history:
-        #   - `-5.0` (10mm): too hard, baseline dropped the nut early
-        #   - `-3.0` (6mm): tactile struggled but baseline could crack
-        #   - `-2.0` (4mm): both could crack ~30%
-        #   - `-1.0` (2mm): tactile hit success trivially, no headroom for ablation
-        # 2026-05-25: bumped back to -3 — tactile+yaw_diff_obs+sharp_xy reward
-        # changes should now give tactile enough signal to crack the harder depth.
-        # 2026-06-09: trying -4 (8mm) — push depth one more pitch to widen the
-        # success/fail tactile gap; revert to -3 if baseline can't crack it.
-        # Combined with the shifted z reward (forge_nutpickplace_env._get_rewards),
-        # the dense `r_descent` / `r_z_descend` peaks at z_disp = -6mm.
+        # Tighter success: nut threaded ~3.5 pitches (~7mm) deep.
         self.task.success_threshold = -3.5
-        # Remove the "rotate-one-direction-only" hardware constraint. By default
-        # nut_thread sets unidirectional_rot=True, which silently clamps any
-        # commanded positive delta_yaw to 0 — meaning the wrist can only ever
-        # rotate negative. That makes yaw learning trivial (any random action,
-        # post action-space mapping, drifts the wrist toward negative). With
-        # unidirectional_rot=False the policy must actually learn *which
-        # direction* to rotate from the reward signal (or from tactile feedback).
+        # Must learn rotation direction (no unidirectional clamp).
         self.task.unidirectional_rot = False
 
     def _apply_baseline_single_pos(self) -> None:
@@ -238,21 +158,3 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         self.task.nut_table_yaw_range = 0.0
         self.task.hand_init_pos_noise = [0.0, 0.0, 0.0]
         self.task.hand_init_orn_noise = [0.0, 0.0, 0.0]
-
-    def _apply_baseline_B2(self) -> None:
-        """Baseline B2: frozen ReWiND CNN encoder produces a 768-dim tactile
-        embedding (per env, per step) that replaces baseline B's 3000-dim raw
-        force-field obs. Symmetric: same embedding is appended to both actor
-        and critic.
-
-        The encoder is loaded inside `ForgeEnv._init_tactile_encoder` when
-        `FORGE_TACTILE_ENCODER_CKPT` is set. It is frozen (eval mode, no grad).
-        `forge_nutpickplace_env._get_observations` populates the
-        `tactile_embedding` key whenever the encoder is enabled.
-        """
-        embed_dim = 768  # TactileCNNEncoder output_dim = 2 * per_hand_dim (384*2)
-        OBS_DIM_CFG.update({"tactile_embedding": embed_dim})
-        STATE_DIM_CFG.update({"tactile_embedding": embed_dim})
-
-        self.obs_order = list(self.obs_order) + ["tactile_embedding"]
-        self.state_order = list(self.state_order) + ["tactile_embedding"]
