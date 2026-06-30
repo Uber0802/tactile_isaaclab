@@ -127,116 +127,44 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
     # (B, C, D, E, ...) are dispatched here without touching A's code path.
     # ------------------------------------------------------------------
     def apply_baseline(self, baseline: str) -> None:
-        if baseline == "A":
-            return
-        if baseline == "A_hard":
-            self._apply_baseline_A_hard()
-            return
-        if baseline == "A_hard_success":
-            self._apply_baseline_A_hard_success()
-            return
-        if baseline == "A_hard_success_yaw01":
-            self._apply_baseline_A_hard_success_yaw01()
-            return
-        if baseline == "B":
-            self._apply_baseline_B()
-            return
-        if baseline == "B2":
-            self._apply_baseline_B2()
+        if baseline == "baseline":
+            self._apply_baseline_baseline()
             return
         if baseline == "single_pos":
             self._apply_baseline_single_pos()
             return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskGearMeshPickPlaceCfg. "
-            f"Implemented: A (frozen), A_hard (A obs + yaw_reward=0), "
-            f"A_hard_success (A_hard + success requires gear half-shaft deep), "
-            f"B (tactile force fields), "
-            f"B2 (frozen ReWiND CNN -> 768-dim embedding), "
-            f"single_pos (A obs + all reset position randomization zeroed)."
+            f"Implemented: baseline (yaw_reward=0 + gear meshed ~5mm deep for "
+            f"success + fixed yaw randomization), "
+            f"single_pos (baseline obs + all reset randomization zeroed)."
         )
 
-    def _apply_baseline_A_hard(self) -> None:
-        """A_hard: same obs/state AND same randomization as A, only the dense
-        yaw shaping is cut. Designed as a "shaping-insufficient" regime to test
-        whether tactile reward can fill the gap left by removing the
-        yaw-alignment gradient — gears need <6° yaw match for teeth to mesh,
-        but `fixed_yaw` is already fully randomized (0..360°) so without dense
-        yaw gradient the policy has to find the matching angle from sparse
-        `curr_engaged`/`curr_success` bonuses alone.
+    def _apply_baseline_baseline(self) -> None:
+        """baseline (was A_hard_success): cut the dense yaw shaping and tighten
+        the success criterion so the gear must descend far enough for real teeth
+        engagement — the regime where tactile reward has room to help.
+
+          - `yaw_reward_scale = 0.0`: remove the dense yaw-alignment gradient;
+            the policy must find the <6° meshing angle from sparse
+            curr_engaged/curr_success bonuses alone.
+          - `success_threshold = -0.1`: gear must descend ~5mm below target z
+            (first-tooth mesh), not just the original "barely touching" 2.5mm
+            slack — so yaw genuinely has to align for the teeth to mesh.
+          - Fix yaw randomization (gear_table_yaw_range=0,
+            fixed_asset_init_orn_range_deg=0, hand_init_orn_noise=0) to match
+            the tactile-reward-model training distribution (collected with
+            single_pos at a single fixed yaw); otherwise the model sees OOD
+            patterns and gives noise instead of usable yaw signal.
         """
+        # Yaw shaping ablation.
         self.task.yaw_reward_scale = 0.0
-        # (randomization knobs intentionally unchanged — only the reward shaping
-        # is ablated; this isolates the effect of yaw_reward removal.)
-
-    def _apply_baseline_A_hard_success(self) -> None:
-        """A_hard_success: A_hard ablation (yaw_reward=0) PLUS a tighter
-        success criterion that requires meaningful teeth engagement —
-        gear must descend ~30% of the shaft height (15mm below target z),
-        not just the original "barely touching" 2.5mm-above-target slack.
-
-        Why this matters: factory's gear_mesh success check only requires
-        `xy_dist < 2.5mm` and `z_disp < shaft_height * success_threshold`, with
-        `check_rot=False` (factory_env.py:439 only sets check_rot for nut).
-        With success_threshold=+0.05 the gear satisfies success while still
-        hovering 2.5mm above the shaft top — yaw never has to align for the
-        teeth to physically mesh, so `r_yaw` becomes pure reward-hack fuel
-        (xy_coarse * yaw_match without contributing to success).
-
-        2026-05-27: relaxed `success_threshold` from -0.3 (15mm deep) to -0.1
-        (5mm deep). The earlier -0.3 was *too* strict — runs plateaued at 0%
-        for 25+ hours with the policy stably hovering at gear_z=+9 mm while
-        every other reward saturated. 5mm depth ≈ first tooth engagement,
-        still requires real meshing (so yaw must align ~within tooth pitch)
-        but reachable from the hover plateau with the depth/curr_success
-        shaping in place. History:
-          - `-1.0` (full 50 mm): all 3 runs plateau 0% × 12h
-          - `-0.3` (15 mm):    25+ h still 0%, hover-trap
-          - `-0.1` (5 mm):     new target — first-tooth-mesh
-          - `+0.05`:           original "barely touching", trivial
-        """
-        # Reuse A_hard ablations (yaw_reward = 0).
-        self._apply_baseline_A_hard()
         # 5 mm below target z (~10% of shaft) — first-tooth mesh.
         self.task.success_threshold = -0.1
-        # Fix yaw randomization to match the tactile-reward-model training
-        # distribution. The curriculum dataset was collected with `single_pos`
-        # (gear_table_yaw_range = 0, fixed_asset_init_orn_range_deg = 0), so
-        # the model only saw tactile patterns from a single fixed initial yaw.
-        # Without these zeros, RL would init gear/bolt at 0..360° random yaw
-        # and the reward model would see OOD patterns most of the time, giving
-        # noise instead of usable yaw-learning signal.
+        # Fixed yaw to stay in the tactile-reward-model training distribution.
         self.task.gear_table_yaw_range = 0.0
         self.task.fixed_asset_init_orn_range_deg = 0.0
         self.task.hand_init_orn_noise = [0.0, 0.0, 0.0]
-
-    def _apply_baseline_A_hard_success_yaw01(self) -> None:
-        """A_hard_success_yaw01: identical to A_hard_success EXCEPT yaw shaping
-        is restored with a wider gate. Previous attempt (yaw_reward=0.1,
-        yaw_scale=0.1 rad ≈ 6°) failed because at the observed 35° drift the
-        signal collapsed to exp(-0.6/0.1) ≈ 0.0025 — effectively zero gradient.
-
-        2026-05-23: bumped to give actual gradient at the drift the gripper
-        induces on pickup:
-          - `yaw_reward_scale = 1.0` (was 0.1) — full-strength signal
-          - `yaw_alignment_scale = 0.5 rad ≈ 28°` (was 0.1) — exp(-0.6/0.5)
-            ≈ 0.30 at 35° drift, exp(-0.1/0.5) ≈ 0.82 inside 6° → still
-            sharp enough at the goal to reward true alignment
-
-        Use case: paper ablation pair
-          - `A_hard_success`(yaw=0): strictest, baseline likely stalls
-          - `A_hard_success_yaw01`(yaw_loose): broader gate, baseline can
-            learn yaw from 35° drift, tactile still adds value on top
-        """
-        # Reuse all A_hard_success ablations (yaw=0, success=-0.3, yaw fixed).
-        self._apply_baseline_A_hard_success()
-        # Wider yaw gate at moderate strength so policy has gradient even at
-        # the 30-40° drift induced by gripper twist during pickup, without
-        # making yaw the dominant dense reward (which created a "hover above
-        # bolt with yaw locked" local optimum). 2026-05-26: 1.0 → 0.3 to leave
-        # room for the new dense depth reward to dominate "press down" budget.
-        self.task.yaw_reward_scale = 0.3
-        self.task.yaw_alignment_scale = 0.5
 
     def _apply_baseline_single_pos(self) -> None:
         """Single-position baseline: identical to A in obs/state, but zero out
@@ -250,50 +178,3 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         self.task.gear_table_yaw_range = 0.0
         self.task.hand_init_pos_noise = [0.0, 0.0, 0.0]
         self.task.hand_init_orn_noise = [0.0, 0.0, 0.0]
-
-    def _apply_baseline_B(self) -> None:
-        """Baseline B: feed the (left, right) GelSight force fields (normal + shear)
-        to both actor and critic. Matches the (T, 40, 25, 3) layout that gets saved
-        to disk by FORGE_SAVE_TACTILE_FORCE_FIELD: 1500 dims per side
-        (500 normal + 1000 shear), 3000 dims total.
-        """
-        rows, cols = self.left_tactile_sensor.tactile_array_size  # (20, 25)
-        num_pts = rows * cols
-        normal_dim = num_pts          # flat (B, num_pts)
-        shear_dim = num_pts * 2       # flat (B, num_pts*2)
-        tactile_dims = {
-            "left_tactile_normal_force": normal_dim,
-            "right_tactile_normal_force": normal_dim,
-            "left_tactile_shear_force": shear_dim,
-            "right_tactile_shear_force": shear_dim,
-        }
-        OBS_DIM_CFG.update(tactile_dims)
-        STATE_DIM_CFG.update(tactile_dims)
-
-        tactile_keys = [
-            "left_tactile_normal_force",
-            "right_tactile_normal_force",
-            "left_tactile_shear_force",
-            "right_tactile_shear_force",
-        ]
-        # Keep the relative order of A's existing entries; just append tactile.
-        self.obs_order = list(self.obs_order) + tactile_keys
-        self.state_order = list(self.state_order) + tactile_keys
-
-    def _apply_baseline_B2(self) -> None:
-        """Baseline B2: frozen ReWiND CNN encoder produces a 768-dim tactile
-        embedding (per env, per step) that replaces baseline B's 3000-dim raw
-        force-field obs. Symmetric: same embedding is appended to both actor
-        and critic.
-
-        The encoder is loaded inside `ForgeEnv._init_tactile_encoder` when
-        `FORGE_TACTILE_ENCODER_CKPT` is set. It is frozen (eval mode, no grad).
-        `forge_gearpickplace_env._get_observations` populates the
-        `tactile_embedding` key whenever the encoder is enabled.
-        """
-        embed_dim = 768  # TactileCNNEncoder output_dim = 2 * per_hand_dim (384*2)
-        OBS_DIM_CFG.update({"tactile_embedding": embed_dim})
-        STATE_DIM_CFG.update({"tactile_embedding": embed_dim})
-
-        self.obs_order = list(self.obs_order) + ["tactile_embedding"]
-        self.state_order = list(self.state_order) + ["tactile_embedding"]
