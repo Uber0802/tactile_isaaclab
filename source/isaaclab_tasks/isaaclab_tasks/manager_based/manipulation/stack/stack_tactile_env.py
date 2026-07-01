@@ -51,6 +51,7 @@ class StackTactileEnv(ManagerBasedRLEnv):
         self.pending_episode_successes = torch.ones(self.num_envs, dtype=torch.long, device=self.device) * -1
         self.pending_episode_successes_at_end = torch.ones(self.num_envs, dtype=torch.long, device=self.device) * -1
         self.env_episode_index = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self.max_episode_success_rate = 0.0
 
         # Tactile saving settings (mirrored from ForgeEnv)
         self._save_tactile_force_field = os.environ.get("FORGE_SAVE_TACTILE_FORCE_FIELD", "0") == "1"
@@ -523,6 +524,7 @@ class StackTactileEnv(ManagerBasedRLEnv):
             if (self.pending_episode_successes >= 0).all():
                 episode_success_rate = self.pending_episode_successes.float().mean()
                 self.extras["episode_success_rate"] = episode_success_rate.item()
+                self.max_episode_success_rate = max(self.max_episode_success_rate, episode_success_rate.item())
                 self.pending_episode_successes.fill_(-1)
 
             if (self.pending_episode_successes_at_end >= 0).all():

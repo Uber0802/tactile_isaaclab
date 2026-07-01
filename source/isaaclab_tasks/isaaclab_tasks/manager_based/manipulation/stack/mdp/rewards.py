@@ -109,12 +109,26 @@ def _maybe_visualize_ee_pos(env: ManagerBasedRLEnv, ee_positions: torch.Tensor):
     marker.visualize(translations=ee_positions, scales=scales)
 
 
-def rewind_tactile_reward(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Query the environment's online ReWiND tactile reward if available."""
+def rewind_tactile_reward(
+    env: ManagerBasedRLEnv,
+    stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
+    target_cube_cfg: SceneEntityCfg = SceneEntityCfg("target_cube"),
+    fade_max_success_rate: float = 0.4,
+) -> torch.Tensor:
+    """Query the environment's online ReWiND tactile reward, fading out globally as success rate improves."""
 
-    if hasattr(env, "compute_tactile_reward"):
-        return env.compute_tactile_reward()
-    return torch.zeros(env.num_envs, device=env.device)
+    if not hasattr(env, "compute_tactile_reward"):
+        return torch.zeros(env.num_envs, device=env.device)
+        
+    raw_reward = env.compute_tactile_reward()
+
+    # Get the global max success rate achieved so far (defaults to 0.0 if not found)
+    max_success_rate = getattr(env, "max_episode_success_rate", 0.0)
+    
+    # Calculate curriculum fade multiplier: 1.0 when success=0.0, 0.0 when success >= fade_max_success_rate
+    fade_multiplier = 1.0 - torch.clamp(torch.tensor(max_success_rate / fade_max_success_rate, device=env.device), min=0.0, max=1.0)
+    
+    return raw_reward * fade_multiplier
 
 
 def ee_to_stack_object_circumference_distance_reward(
