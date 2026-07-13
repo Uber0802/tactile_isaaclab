@@ -52,6 +52,13 @@ class StackTactileEnv(ManagerBasedRLEnv):
         self.pending_episode_successes_at_end = torch.ones(self.num_envs, dtype=torch.long, device=self.device) * -1
         self.env_episode_index = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.max_episode_success_rate = 0.0
+        # Tactile-reward annealing curriculum (see mdp.rewards.rewind_tactile_reward).
+        # Height (world-frame z) above which the object counts as "grasped upward".
+        self._z_grasp_threshold = 0.045
+        # Monotonic best-so-far fraction of envs holding the object above that height.
+        # Bounded in [0, 1] and robust to a single lucky env (each contributes 1/num_envs),
+        # so the tactile bonus fades out only as the *population* reliably learns to lift.
+        self.max_lift_rate = 0.0
 
         # Tactile saving settings (mirrored from ForgeEnv)
         self._save_tactile_force_field = os.environ.get("FORGE_SAVE_TACTILE_FORCE_FIELD", "0") == "1"
@@ -513,6 +520,16 @@ class StackTactileEnv(ManagerBasedRLEnv):
         else:
              curr_successes = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
+        # Track best-so-far lifting progress for tactile-reward annealing: running max of the
+        # fraction of envs holding the object above the grasp height. Bounded in [0, 1] and robust
+        # to a single lucky env, so the fade only tightens as the population reliably learns to lift.
+        if "stack_object" in self.scene.keys():
+            obj_z = self.scene["stack_object"].data.root_pos_w[:, 2]
+            lift_rate = (obj_z > self._z_grasp_threshold).float().mean().item()
+            self.max_lift_rate = max(self.max_lift_rate, lift_rate)
+            self.extras["lift_rate"] = lift_rate
+            self.extras["max_lift_rate"] = self.max_lift_rate
+
         self._save_env0_tactile_force_field()
 
         if torch.any(self.reset_buf):
@@ -545,7 +562,10 @@ class StackTactileEnv(ManagerBasedRLEnv):
         resume. We persist the monotonic curriculum state so the tactile-reward
         fade (see ``rewind_tactile_reward``) does not restart from full strength.
         """
-        return {"max_episode_success_rate": float(self.max_episode_success_rate)}
+        return {
+            "max_episode_success_rate": float(self.max_episode_success_rate),
+            "max_lift_rate": float(self.max_lift_rate),
+        }
 
     def set_env_state(self, env_state):
         """Restore persisted env state when resuming from a checkpoint."""
@@ -553,10 +573,13 @@ class StackTactileEnv(ManagerBasedRLEnv):
             return
         if "max_episode_success_rate" in env_state:
             self.max_episode_success_rate = float(env_state["max_episode_success_rate"])
-            print(
-                f"[StackTactileEnv] Restored max_episode_success_rate="
-                f"{self.max_episode_success_rate:.4f} from checkpoint"
-            )
+        if "max_lift_rate" in env_state:
+            self.max_lift_rate = float(env_state["max_lift_rate"])
+        print(
+            f"[StackTactileEnv] Restored curriculum state from checkpoint: "
+            f"max_episode_success_rate={self.max_episode_success_rate:.4f}, "
+            f"max_lift_rate={self.max_lift_rate:.4f}"
+        )
 
     def reset(self, seed: int | None = None, env_ids: Sequence[int] | None = None, options: dict | None = None):
         if env_ids is None:
