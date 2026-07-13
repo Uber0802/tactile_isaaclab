@@ -537,6 +537,27 @@ class StackTactileEnv(ManagerBasedRLEnv):
 
         return obs, reward, terminated, truncated, info
 
+    def get_env_state(self):
+        """Serializable env state persisted inside the rl_games checkpoint.
+
+        rl_games stores this dict under ``state['env_state']`` in the .pth via
+        ``get_full_state_weights`` and hands it back through ``set_env_state`` on
+        resume. We persist the monotonic curriculum state so the tactile-reward
+        fade (see ``rewind_tactile_reward``) does not restart from full strength.
+        """
+        return {"max_episode_success_rate": float(self.max_episode_success_rate)}
+
+    def set_env_state(self, env_state):
+        """Restore persisted env state when resuming from a checkpoint."""
+        if not env_state:
+            return
+        if "max_episode_success_rate" in env_state:
+            self.max_episode_success_rate = float(env_state["max_episode_success_rate"])
+            print(
+                f"[StackTactileEnv] Restored max_episode_success_rate="
+                f"{self.max_episode_success_rate:.4f} from checkpoint"
+            )
+
     def reset(self, seed: int | None = None, env_ids: Sequence[int] | None = None, options: dict | None = None):
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)

@@ -300,6 +300,18 @@ class RlGamesVecEnvWrapper(IVecEnv):
     def close(self):  # noqa: D102
         return self.env.close()
 
+    def get_env_state(self):  # noqa: D102
+        # Persisted into the rl_games checkpoint under 'env_state' if the
+        # underlying env exposes it (e.g. adaptive-curriculum state).
+        get_state = getattr(self.unwrapped, "get_env_state", None)
+        return get_state() if callable(get_state) else None
+
+    def set_env_state(self, env_state):  # noqa: D102
+        # Restored from the checkpoint on resume, if supported by the env.
+        set_state = getattr(self.unwrapped, "set_env_state", None)
+        if callable(set_state):
+            set_state(env_state)
+
     """
     Helper functions
     """
@@ -415,3 +427,11 @@ class RlGamesGpuEnv(IVecEnv):
             The Gym spaces for the environment.
         """
         return self.env.get_env_info()
+
+    def get_env_state(self):  # noqa: D102
+        # Forwarded to rl_games' get_full_state_weights() -> saved in the checkpoint.
+        return self.env.get_env_state()
+
+    def set_env_state(self, env_state):  # noqa: D102
+        # Forwarded from rl_games' set_full_state_weights() on checkpoint resume.
+        self.env.set_env_state(env_state)
