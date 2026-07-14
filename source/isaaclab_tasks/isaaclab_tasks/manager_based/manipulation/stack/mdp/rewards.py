@@ -113,28 +113,21 @@ def rewind_tactile_reward(
     env: ManagerBasedRLEnv,
     stack_object_cfg: SceneEntityCfg = SceneEntityCfg("stack_object"),
     target_cube_cfg: SceneEntityCfg = SceneEntityCfg("target_cube"),
-    lift_rate_target: float = 0.8,
+    fade_max_success_rate: float = 0.4,
 ) -> torch.Tensor:
-    """Query the environment's online ReWiND tactile reward, fading it out as the object learns to lift.
-
-    Annealing is driven by ``env.max_lift_rate`` -- the monotonic best-so-far (running max) of the
-    fraction of envs holding the object above the grasp height (``StackTactileEnv._z_grasp_threshold``).
-    The signal is bounded in [0, 1] and robust to a single lucky env (each contributes 1/num_envs), so
-    the tactile bonus fades from full strength (no env lifting) to 0 once the *population* reliably
-    grasps the object upward (``max_lift_rate >= lift_rate_target``).
-    """
+    """Query the environment's online ReWiND tactile reward, fading out globally as success rate improves."""
 
     if not hasattr(env, "compute_tactile_reward"):
         return torch.zeros(env.num_envs, device=env.device)
-
+        
     raw_reward = env.compute_tactile_reward()
 
-    # Best-so-far lift rate achieved by the population (defaults to 0.0 if not tracked).
-    max_lift_rate = getattr(env, "max_lift_rate", 0.0)
-
-    # Fade: 1.0 while no env lifts, decaying to 0.0 as the lift rate reaches lift_rate_target.
-    fade_multiplier = 1.0 - min(max(max_lift_rate / lift_rate_target, 0.0), 1.0)
-
+    # Get the global max success rate achieved so far (defaults to 0.0 if not found)
+    max_success_rate = getattr(env, "max_episode_success_rate", 0.0)
+    
+    # Calculate curriculum fade multiplier: 1.0 when success=0.0, 0.0 when success >= fade_max_success_rate
+    fade_multiplier = 1.0 - torch.clamp(torch.tensor(max_success_rate / fade_max_success_rate, device=env.device), min=0.0, max=1.0)
+    
     return raw_reward * fade_multiplier
 
 
