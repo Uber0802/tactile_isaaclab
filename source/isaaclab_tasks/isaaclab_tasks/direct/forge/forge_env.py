@@ -797,15 +797,22 @@ class ForgeEnv(FactoryEnv):
     # exposes a per-step 768-dim embedding via `_compute_tactile_embedding()`.
     # ----------------------------------------------------------------------
     def _init_tactile_encoder(self):
-        """Optional 768-dim tactile embedding for Baseline B2.
+        """Optional frozen tactile embedding (Baseline B2 / raw_tactile).
 
         Activated when env var FORGE_TACTILE_ENCODER_CKPT points at a .pth.
         Loads only the `TactileCNNEncoder` submodule (encoder.*) from the same
         ckpt format used by `_init_tactile_reward`, freezes it, and runs it
-        once per env-step on the current (B, 2, 40, 25) shear-only frame.
+        once per env-step on the current force-field frame:
+          * B2 / ReWiND ckpts:  (B, 2, 40, 25) shear-only, raw scale.
+          * AE ckpts (train_tactile_ae.py): channel count and fixed input
+            scale come from ckpt args (`in_channels`, `global_scale`) —
+            3-channel ckpts consume (normal, shear_x, shear_y) in the disk
+            layout of FORGE_SAVE_TACTILE_FORCE_FIELD.
         Knobs:
             FORGE_TACTILE_ENCODER_CKPT  (str path; empty = disabled)
             FORGE_TACTILE_ENCODER_ROOT  (path to Tactile-ReWiND repo for sys.path)
+            FORGE_TACTILE_ENCODER_DIM   (optional int; assert ckpt output dim
+                                         matches the dim the env cfg promised)
         """
         self._tactile_encoder_enabled = False
         ckpt = os.getenv("FORGE_TACTILE_ENCODER_CKPT", "").strip()
@@ -829,10 +836,26 @@ class ForgeEnv(FactoryEnv):
         num_strided = cfg.get("num_strided_layers", None) or 3
         bimanual_axis = cfg.get("bimanual_axis", None) or "height"
         per_hand_dim = cfg.get("per_hand_dim", 384)
+        # AE ckpts store these; ReWiND reward ckpts predate them (→ defaults
+        # reproduce the original B2 behavior: shear-only, raw scale).
+        in_channels = int(cfg.get("in_channels", None) or 2)
+        global_scale = cfg.get("global_scale", None)
         output_dim = 2 * per_hand_dim   # matches TactileReWiNDTransformer.video_dim
 
+        # The env cfg sized the obs/state vectors before this ckpt was read
+        # (FORGE_TACTILE_ENCODER_DIM, default 128 for raw_tactile; 768
+        # hardcoded for B2). Fail here with a readable message instead of a
+        # shape mismatch deep inside factory obs assembly.
+        want_dim = os.getenv("FORGE_TACTILE_ENCODER_DIM", "").strip()
+        if want_dim and int(want_dim) != output_dim:
+            raise RuntimeError(
+                f"[TactileEncoder] FORGE_TACTILE_ENCODER_DIM={want_dim} but ckpt "
+                f"{ckpt} has output_dim={output_dim} (per_hand_dim={per_hand_dim}). "
+                f"Fix the env var or retrain the AE with --per_hand_dim {int(want_dim) // 2}."
+            )
+
         encoder = TactileCNNEncoder(
-            in_channels=2,                 # shear-only (Fx, Fy)
+            in_channels=in_channels,       # 2 = shear-only (B2), 3 = normal+shear (AE)
             per_hand_dim=per_hand_dim,
             output_dim=output_dim,
             num_strided_layers=num_strided,
@@ -854,15 +877,22 @@ class ForgeEnv(FactoryEnv):
 
         self._tactile_encoder = encoder
         self._tactile_encoder_dim = output_dim
+        self._tactile_encoder_in_channels = in_channels
+        self._tactile_encoder_scale = float(global_scale) if global_scale else None
         self._tactile_encoder_enabled = True
         print(f"[TactileEncoder] enabled  ckpt={ckpt}  out_dim={output_dim}  "
+              f"in_ch={in_channels}  scale={self._tactile_encoder_scale}  "
               f"axis={bimanual_axis}  strided={num_strided}")
 
     def _compute_tactile_embedding(self) -> torch.Tensor:
-        """(num_envs, 768) per-step embedding of the current shear frame.
+        """(num_envs, D) per-step embedding of the current force-field frame.
 
-        Mirrors the layout used at ReWiND training: shear-only, bimanual stacked
-        on the H axis -> (B, 2, 40, 25), then passed through the frozen CNN.
+        Bimanual stacked on the H axis, then passed through the frozen CNN:
+          * 2-channel ckpts (B2 / ReWiND): shear-only -> (B, 2, 40, 25),
+            raw scale — mirrors the ReWiND training layout.
+          * 3-channel AE ckpts: (normal, shear_x, shear_y) -> (B, 3, 40, 25),
+            matching the FORGE_SAVE_TACTILE_FORCE_FIELD disk layout the AE
+            was trained on, divided by the ckpt's fixed `global_scale`.
         Returns zeros if the encoder is not enabled (so callers can populate
         the obs dict unconditionally).
         """
@@ -877,10 +907,22 @@ class ForgeEnv(FactoryEnv):
         nrows, ncols = left.cfg.tactile_array_size           # (20, 25)
         l_shear = left.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
         r_shear = right.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
-        # (B, 40, 25, 2) -> (B, 2, 40, 25) for the CNN.
-        frame = torch.cat([l_shear, r_shear], dim=1).float().permute(0, 3, 1, 2).contiguous()
+        if getattr(self, "_tactile_encoder_in_channels", 2) == 3:
+            # Disk channel order (normal, shear_x, shear_y) — see
+            # _save_env0_tactile_force_field.
+            l_norm = left.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+            r_norm = right.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+            l_frame = torch.cat([l_norm, l_shear], dim=-1)
+            r_frame = torch.cat([r_norm, r_shear], dim=-1)
+        else:
+            l_frame, r_frame = l_shear, r_shear
+        # (B, 40, 25, C) -> (B, C, 40, 25) for the CNN.
+        frame = torch.cat([l_frame, r_frame], dim=1).float().permute(0, 3, 1, 2).contiguous()
+        scale = getattr(self, "_tactile_encoder_scale", None)
+        if scale:
+            frame = frame / scale
         with torch.no_grad():
-            return self._tactile_encoder(frame)              # (B, 768)
+            return self._tactile_encoder(frame)              # (B, D)
 
     def _get_tactile_force_tensors(self, sensor_name: str):
         """Return flattened normal/shear tactile force tensors for a registered sensor."""

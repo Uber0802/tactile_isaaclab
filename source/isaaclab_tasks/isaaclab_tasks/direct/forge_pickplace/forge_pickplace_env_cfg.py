@@ -3,6 +3,8 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
+import os
+
 from isaaclab.utils import configclass
 
 from isaaclab_tasks.direct.factory.factory_env_cfg import OBS_DIM_CFG, STATE_DIM_CFG
@@ -95,6 +97,9 @@ class ForgeTaskPegInsertPickPlaceCfg(ForgeTaskPegInsertCfg):
         if baseline == "A_legacy":
             self._apply_baseline_A_legacy()
             return
+        if baseline == "raw_tactile":
+            self._apply_baseline_raw_tactile()
+            return
         if baseline == "A_hard_success":
             self._apply_baseline_A_hard_success()
             return
@@ -114,6 +119,7 @@ class ForgeTaskPegInsertPickPlaceCfg(ForgeTaskPegInsertCfg):
             f"Unknown baseline {baseline!r} for ForgeTaskPegInsertPickPlaceCfg. "
             f"Implemented: A (frozen), "
             f"A_legacy (May 15 commit ed32dd8 shaping — no transport bridges), "
+            f"raw_tactile (A_legacy shaping + frozen AE tactile latent in obs+state), "
             f"A_hard_success (A obs + transport shapings off + tight success), "
             f"B (tactile force fields), "
             f"B2 (frozen ReWiND CNN -> 768-dim embedding), "
@@ -148,6 +154,59 @@ class ForgeTaskPegInsertPickPlaceCfg(ForgeTaskPegInsertCfg):
         self.task.xy_align_reward_scale = 0.5
         self.task.z_align_reward_scale = 0.5
         self.task.descent_xy_threshold = 0.01
+
+    def _apply_baseline_raw_tactile(self) -> None:
+        """raw_tactile: A_legacy reward shaping + frozen AE tactile latent.
+
+        Reward side is byte-identical to A_legacy (half-strength transport
+        bridges, 1 cm descent gate), so the only delta vs. that baseline is
+        the extra input modality: a tactile embedding from a frozen
+        autoencoder-pretrained TactileCNNEncoder (trained by
+        external/third-party/Tactile-ReWiND/train_tactile_ae.py on saved
+        (T, 40, 25, 3) force-field episodes). Unlike B2's encoder (trained
+        to predict ReWiND task progress), the AE latent carries no
+        task/reward information — it is a pure compression of the
+        (normal, shear_x, shear_y) force fields — so this baseline isolates
+        "tactile as state input" from "tactile as reward" (TacReward).
+
+        The embedding is appended to BOTH actor obs and critic state
+        (B/B2 convention). Latent width comes from FORGE_TACTILE_ENCODER_DIM
+        (default 128 = 2 x per_hand_dim 64) and must equal the ckpt
+        encoder's output dim — `_init_tactile_encoder` raises at startup on
+        mismatch.
+
+        GelSight RGB is not consumed here, so the tactile cameras are
+        switched off (force-field / SDF sensing only). The run therefore
+        needs no --enable_cameras / RTX renderer and stays runnable on
+        compute-only cloud GPUs.
+        """
+        # Fail fast on incompatible env-var combos (clearer than the
+        # KeyError / shape error they would otherwise cause deep in obs
+        # assembly).
+        if os.getenv("FORGE_SKIP_TACTILE_SENSORS", "0") == "1":
+            raise RuntimeError(
+                "baseline raw_tactile reads the GelSight force fields; unset "
+                "FORGE_SKIP_TACTILE_SENSORS."
+            )
+        if not os.getenv("FORGE_TACTILE_ENCODER_CKPT", "").strip():
+            raise RuntimeError(
+                "baseline raw_tactile requires FORGE_TACTILE_ENCODER_CKPT "
+                "(autoencoder ckpt from train_tactile_ae.py)."
+            )
+
+        # Same reward regime as the paired no-tactile baseline.
+        self._apply_baseline_A_legacy()
+
+        embed_dim = int(os.getenv("FORGE_TACTILE_ENCODER_DIM", "128"))
+        OBS_DIM_CFG.update({"tactile_embedding": embed_dim})
+        STATE_DIM_CFG.update({"tactile_embedding": embed_dim})
+        self.obs_order = list(self.obs_order) + ["tactile_embedding"]
+        self.state_order = list(self.state_order) + ["tactile_embedding"]
+
+        # Force-field only: drop the tactile RGB camera pipeline (unused by
+        # this baseline; SDF force sensing does not need the RTX renderer).
+        self.left_tactile_sensor.enable_camera_tactile = False
+        self.right_tactile_sensor.enable_camera_tactile = False
 
     def _apply_baseline_A_hard_success(self) -> None:
         """A_hard_success: same obs/state as A, but the transport-phase coarse
