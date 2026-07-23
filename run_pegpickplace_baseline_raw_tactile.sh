@@ -28,7 +28,6 @@ TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
 FORGE_TACTILE_ENCODER_CKPT=/mnt/tank/uber/Tactile-Reward/tactile_ae_peg/ae_best.pth \
-FORGE_TACTILE_ENCODER_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-party/Tactile-ReWiND \
 FORGE_TACTILE_ENCODER_DIM=128 \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \

@@ -819,10 +819,16 @@ class ForgeEnv(FactoryEnv):
         if not ckpt:
             return
 
-        rewind_root = os.path.expanduser(os.getenv(
-            "FORGE_TACTILE_ENCODER_ROOT",
-            "~/tactile_isaaclab/external/third-party/Tactile-ReWiND",
+        # Default to the ReWiND checkout bundled with THIS repo (derived from
+        # our own location, so it works on any machine/checkout without the
+        # env var). FORGE_TACTILE_ENCODER_ROOT stays as an explicit override.
+        default_root = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            *([".."] * 5), "external", "third-party", "Tactile-ReWiND",
         ))
+        rewind_root = os.path.expanduser(
+            os.getenv("FORGE_TACTILE_ENCODER_ROOT", "").strip() or default_root
+        )
         if rewind_root not in sys.path:
             sys.path.insert(0, rewind_root)
         try:
