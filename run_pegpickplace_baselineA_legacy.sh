@@ -21,11 +21,11 @@ FORGE_SKIP_TACTILE_SENSORS=1 \
     --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
     --baseline A_legacy \
     --headless \
-    --num_envs 128 \
+    --num_envs 256 \
     --seed 2 \
-    --max_iterations 10000 \
+    --max_iterations 5000 \
     --track \
-    --wandb-entity b11902127-ntu \
+    --wandb-entity b06902045-national-taiwan-university \
     --wandb-project-name tactile-rewind \
     --wandb-name PegInsert_PickPlace_baselineA_legacy_seed2 \
     agent.params.config.full_experiment_name=PegInsert_PickPlace_baselineA_legacy_seed2 \

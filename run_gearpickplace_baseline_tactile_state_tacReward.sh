@@ -27,18 +27,27 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-FORGE_TACTILE_ENCODER_CKPT=/mnt/scratch/kimnai/research/tarl/ae_16/ae_best.pth \
+FORGE_TACTILE_REWARD_CKPT=/mnt/lab-tank/tactile/Tactile-Reward/exp_gear_seed2/gear_seed2_scratch/gear_seed2_scratch_epoch29.pth \
+FORGE_TACTILE_REWARD_LOG_DIR=/mnt/lab-home/tactile/tactile_isaaclab/logs/tactile_curves/GearMesh_TacReward_hard_success_yaw01_0.3 \
+FORGE_TACTILE_REWARD_SCALE=0.2 \
+FORGE_TACTILE_REWARD_SCALE_END=0.0 \
+FORGE_TACTILE_REWARD_ANNEAL_MODE=success \
+FORGE_TACTILE_REWARD_ANNEAL_SUCCESS_THRESH=0.1 \
+FORGE_TACTILE_REWARD_ANNEAL_STEPS=25600 \
+FORGE_TACTILE_REWARD_INSTRUCTION="pick up the gear and mesh it onto the shaft" \
+FORGE_TACTILE_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-party/Tactile-ReWiND \
+FORGE_TACTILE_ENCODER_CKPT=/mnt/scratch/kimnai/research/tarl/gear_ae_16/ae_best.pth \
 FORGE_TACTILE_ENCODER_DIM=32 \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
-    --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
-    --baseline raw_tactile \
+    --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
+    --baseline tactile_state \
     --headless \
-    --num_envs 128 \
+    --num_envs 256 \
     --seed 0 \
-    --max_iterations 10000 \
+    --max_iterations 3500 \
     --track \
     --wandb-entity b06902045-national-taiwan-university \
     --wandb-project-name tactile-rewind \
-    --wandb-name PegInsert_PickPlace_baseline_raw_tactile32_seed0 \
-    agent.params.config.full_experiment_name=PegInsert_PickPlace_baseline_raw_tactile32_seed0 \
-    agent.params.config.save_frequency=100
+    --wandb-name GearMesh_PickPlace_baselineTacReward_yaw01_yawinput0.5_anneal0.1_100_0.2_seed2_new \
+    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineTacReward_yaw01_yawinput0.5_anneal0.1_100_0.2_seed2_new \
+    agent.params.config.save_frequency=20
