@@ -2,6 +2,7 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+import os
 import isaaclab.sim as sim_utils
 
 from isaaclab.assets import DeformableObjectCfg
@@ -113,6 +114,7 @@ class FrankaStackBowlEnvCfg(TactileFrankaStackEnvCfg):
     """Configuration for the Franka Gelsight Environment."""
 
     rewards: GelsightRewardsCfg = GelsightRewardsCfg()
+    enable_sensor: bool = os.environ.get("FORGE_ENABLE_SENSOR", "0") == "1"
 
     def __post_init__(self):
         # post init of parent

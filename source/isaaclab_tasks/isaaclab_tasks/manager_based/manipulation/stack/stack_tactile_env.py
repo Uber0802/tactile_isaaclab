@@ -84,6 +84,9 @@ class StackTactileEnv(ManagerBasedRLEnv):
 
         # Optional Tactile-ReWiND progress reward.
         self._init_tactile_reward()
+
+        # Optional frozen tactile-AE encoder for the `tactile_embedding` obs.
+        self._init_tactile_encoder()
     
     def _get_tactile_vector_field(self, sensor_name: str):
         """Return the GelSight force field for a given sensor as (N, H, W, 3)."""
@@ -95,6 +98,147 @@ class StackTactileEnv(ManagerBasedRLEnv):
         normal_force = sensor.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
         shear_force = sensor.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
         return torch.cat((normal_force, shear_force), dim=-1)
+
+    def _tactile_row_stacked_field(self):
+        """(N, 2*rows, cols, 3) force field with the hands stacked on the ROW axis.
+
+        This is the layout both the ReWiND reward model and the AE encoder are
+        trained on: channels = (normal, shear_x, shear_y), rows 0-19 = left
+        finger, 20-39 = right finger. Note it differs from the dataset dump in
+        `_flush_tactile_episode`, which stacks the hands on the CHANNEL axis —
+        `train_tactile_ae.py` converts to this form on load.
+
+        Returns None when the sensors are absent or have not rendered yet.
+        """
+        if ("left_tactile_sensor" not in self.scene.sensors
+                or "right_tactile_sensor" not in self.scene.sensors):
+            return None
+        left = self.scene.sensors["left_tactile_sensor"]
+        right = self.scene.sensors["right_tactile_sensor"]
+        for sensor in (left, right):
+            if getattr(sensor, "_nominal_tactile", None) is None:
+                return None
+
+        nrows, ncols = left.cfg.tactile_array_size
+        l_shear = left.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
+        r_shear = right.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
+        l_normal = left.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+        r_normal = right.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+        l_full = torch.cat([l_normal, l_shear], dim=-1)
+        r_full = torch.cat([r_normal, r_shear], dim=-1)
+        return torch.cat([l_full, r_full], dim=1).float()
+
+    @staticmethod
+    def _rewind_root() -> str:
+        """Directory holding `tools/tactile_model.py`.
+
+        The env-var overrides win, but the repo-relative path is the fallback
+        that is correct by construction — the historical default
+        (`~/tactile_isaaclab/...`) silently misses on checkouts that live
+        anywhere else.
+        """
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), *[".."] * 6))
+        candidates = [
+            os.getenv("FORGE_TACTILE_ENCODER_ROOT", "").strip(),
+            os.getenv("FORGE_TACTILE_REWARD_ROOT", "").strip(),
+            os.path.join(repo_root, "external", "third-party", "Tactile-ReWiND"),
+        ]
+        for cand in candidates:
+            if cand and os.path.isfile(
+                os.path.join(os.path.expanduser(cand), "tools", "tactile_model.py")
+            ):
+                return os.path.expanduser(cand)
+        return os.path.expanduser(candidates[-1])
+
+    def _init_tactile_encoder(self):
+        """Frozen tactile-AE latent exposed as the `tactile_embedding` obs key.
+
+        Activated when FORGE_TACTILE_ENCODER_CKPT points at a checkpoint from
+        `external/third-party/Tactile-ReWiND/train_tactile_ae.py`. Unlike the
+        ReWiND reward model, this latent is trained purely for reconstruction —
+        it carries "what the sensor feels", not task progress — so it gives the
+        policy tactile-as-state without leaking a reward signal.
+
+        Knobs:
+            FORGE_TACTILE_ENCODER_CKPT  (str path; empty = disabled)
+            FORGE_TACTILE_ENCODER_DIM   (int; must equal 2*per_hand_dim of the
+                                        ckpt — the obs term's width is fixed
+                                        from this var before the ckpt is read)
+            FORGE_TACTILE_ENCODER_ROOT  (path to Tactile-ReWiND for sys.path)
+        """
+        self._tactile_encoder_enabled = False
+        self._tactile_encoder_dim = 0
+        ckpt = os.getenv("FORGE_TACTILE_ENCODER_CKPT", "").strip()
+        if not ckpt:
+            return
+
+        rewind_root = self._rewind_root()
+        if rewind_root not in sys.path:
+            sys.path.insert(0, rewind_root)
+        try:
+            from tools.tactile_model import TactileCNNEncoder
+        except Exception as e:
+            print(f"[TactileEncoder] FAILED import (rewind_root={rewind_root}): {e}")
+            return
+
+        state = torch.load(ckpt, map_location=self.device, weights_only=False)
+        cfg = state.get("args", {})
+        in_channels = int(cfg.get("in_channels", 3))
+        per_hand_dim = int(cfg.get("per_hand_dim", 64))
+        dim = 2 * per_hand_dim
+
+        # The obs term sizes itself from the env var at manager-construction
+        # time, long before this runs — a mismatch would hand the policy a
+        # zero-filled column of the wrong width for the whole run.
+        declared = os.getenv("FORGE_TACTILE_ENCODER_DIM", "").strip()
+        if declared and int(declared) != dim:
+            raise ValueError(
+                f"FORGE_TACTILE_ENCODER_DIM={declared} but {ckpt} has "
+                f"per_hand_dim={per_hand_dim} (latent dim {dim}). Set "
+                f"FORGE_TACTILE_ENCODER_DIM={dim}."
+            )
+
+        self._tactile_encoder = TactileCNNEncoder(
+            in_channels=in_channels,
+            per_hand_dim=per_hand_dim,
+            output_dim=dim,
+            num_strided_layers=int(cfg.get("num_strided_layers", 3)),
+            bimanual_axis=cfg.get("bimanual_axis", None) or "height",
+        ).to(self.device)
+        # The AE ckpt holds encoder.* + decoder.*; the decoder is training-only.
+        prefix = "encoder."
+        enc_state = {k[len(prefix):]: v for k, v in state["model_state_dict"].items()
+                     if k.startswith(prefix)}
+        self._tactile_encoder.load_state_dict(enc_state)
+        self._tactile_encoder.eval()
+        for param in self._tactile_encoder.parameters():
+            param.requires_grad_(False)
+
+        # Same fixed dataset-wide scale the AE was trained with — per-frame
+        # normalization here would destroy the grip-strength information the
+        # latent encodes.
+        scale = float(cfg.get("global_scale", 1.0))
+        self._tactile_encoder_scale = scale if scale > 0 else 1.0
+        self._tactile_encoder_channels = (0, 1, 2) if in_channels == 3 else (1, 2)
+        self._tactile_encoder_dim = dim
+        self._tactile_encoder_enabled = True
+        print(f"[TactileEncoder] enabled  ckpt={ckpt}  dim={dim}  "
+              f"in_channels={in_channels}  global_scale={self._tactile_encoder_scale:.6g}")
+
+    def compute_tactile_embedding(self):
+        """(num_envs, 2*per_hand_dim) frozen AE latent, or None if disabled."""
+        if not getattr(self, "_tactile_encoder_enabled", False):
+            return None
+
+        field = self._tactile_row_stacked_field()
+        if field is None:
+            return torch.zeros(self.num_envs, self._tactile_encoder_dim, device=self.device)
+
+        x = field[..., list(self._tactile_encoder_channels)] / self._tactile_encoder_scale
+        x = x.permute(0, 3, 1, 2).contiguous()                # (N, C, 40, 25)
+        with torch.no_grad():
+            z = self._tactile_encoder(x)
+        return z.detach().float()
 
     def _init_tactile_reward(self):
         """Optional dense reward bonus from a Tactile-ReWiND ckpt.
@@ -233,20 +377,9 @@ class StackTactileEnv(ManagerBasedRLEnv):
         if not getattr(self, "_tactile_reward_enabled", False):
             return torch.zeros(self.num_envs, device=self.device)
 
-        if "left_tactile_sensor" not in self.scene.sensors or "right_tactile_sensor" not in self.scene.sensors:
+        full = self._tactile_row_stacked_field()
+        if full is None:
             return torch.zeros(self.num_envs, device=self.device)
-
-        left = self.scene.sensors["left_tactile_sensor"]
-        right = self.scene.sensors["right_tactile_sensor"]
-        nrows, ncols = left.cfg.tactile_array_size
-        
-        l_shear = left.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
-        r_shear = right.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
-        l_normal = left.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
-        r_normal = right.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
-        l_full = torch.cat([l_normal, l_shear], dim=-1)
-        r_full = torch.cat([r_normal, r_shear], dim=-1)
-        full = torch.cat([l_full, r_full], dim=1).float()
         current = full[..., list(self._tactile_shear_channels)].detach()
 
         H = self._tactile_history_length

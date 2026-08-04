@@ -142,7 +142,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if "pbt" in agent_cfg and agent_cfg["pbt"]["directory"] != ".":
         log_root_path = os.path.join(agent_cfg["pbt"]["directory"], log_root_path)
     else:
-        log_root_path = os.path.abspath(log_root_path)
+        log_base = os.environ.get("ISAACLAB_LOG_DIR", None)
+        if log_base is not None:
+            log_root_path = os.path.join(log_base, "rl_games", config_name)
+        else:
+            log_root_path = os.path.abspath(log_root_path)
 
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     # specify directory for logging runs
@@ -237,6 +241,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             sync_tensorboard=True,
             monitor_gym=True,
             save_code=True,
+            dir=os.environ.get("WANDB_DIR", "."),
         )
         if not wandb.run.resumed:
             wandb.config.update({"env_cfg": env_cfg.to_dict()})

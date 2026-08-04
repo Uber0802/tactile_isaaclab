@@ -41,20 +41,23 @@ class GelsightObservationsCfg(ObservationsCfg):
 
     def __post_init__(self):
         super().__post_init__()
-        '''
-        self.policy.left_tactile_normal_force = ObsTerm(
-            func=mdp.tactile_normal_force, params={"sensor_cfg": SceneEntityCfg("left_tactile_sensor")}
-        )
-        self.policy.left_tactile_shear_force = ObsTerm(
-            func=mdp.tactile_shear_force, params={"sensor_cfg": SceneEntityCfg("left_tactile_sensor")}
-        )
-        self.policy.right_tactile_normal_force = ObsTerm(
-            func=mdp.tactile_normal_force, params={"sensor_cfg": SceneEntityCfg("right_tactile_sensor")}
-        )
-        self.policy.right_tactile_shear_force = ObsTerm(
-            func=mdp.tactile_shear_force, params={"sensor_cfg": SceneEntityCfg("right_tactile_sensor")}
-        )
-        '''
+
+        # Tactile-as-state: a frozen AE latent rather than the raw fields.
+        # The four raw terms below it replaces are 2*20*25*3 = 3000 dims, which
+        # would swamp the ~30-dim proprio state; the AE (trained for pure
+        # reconstruction by train_tactile_ae.py, so it carries no task-progress
+        # signal) delivers the same information in 2*per_hand_dim.
+        tactile_encoder_ckpt = os.environ.get("FORGE_TACTILE_ENCODER_CKPT", "").strip()
+        if tactile_encoder_ckpt:
+            if os.environ.get("FORGE_ENABLE_SENSOR", "0") != "1":
+                print("[GelsightObservationsCfg] FORGE_TACTILE_ENCODER_CKPT is set but "
+                      "FORGE_ENABLE_SENSOR != 1 — skipping the tactile_embedding obs "
+                      "(without sensors it would be a constant zero column).")
+            else:
+                self.policy.tactile_embedding = ObsTerm(
+                    func=mdp.tactile_embedding,
+                    params={"dim": int(os.environ.get("FORGE_TACTILE_ENCODER_DIM", "128"))},
+                )
 @configclass
 class GelsightRewardsCfg(RewardsCfg):
     """Reward specifications for the Gelsight environment."""
@@ -157,79 +160,6 @@ class TactileFrankaStackEnvCfg(StackEnvCfg):
         # Set events
         self.events = EventCfg()
 
-        '''
-        # Set Franka as robot
-        self.scene.robot = ArticulationCfg(
-            prim_path="{ENV_REGEX_NS}/Robot",
-            spawn=sim_utils.UsdFileCfg(
-                usd_path=LOCAL_PEG_INSERT_ROBOT_USD_PATH,
-                activate_contact_sensors=True,
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    disable_gravity=True,
-                    max_depenetration_velocity=5.0,
-                    linear_damping=0.0,
-                    angular_damping=0.0,
-                    max_linear_velocity=1000.0,
-                    max_angular_velocity=3666.0,
-                    enable_gyroscopic_forces=True,
-                    solver_position_iteration_count=32,
-                    solver_velocity_iteration_count=1,
-                    max_contact_impulse=1e32,
-                ),
-                articulation_props=sim_utils.ArticulationRootPropertiesCfg(
-                    enabled_self_collisions=False,
-                    solver_position_iteration_count=32,
-                    solver_velocity_iteration_count=1,
-                    fix_root_link=True,
-                ),
-                collision_props=sim_utils.CollisionPropertiesCfg(contact_offset=0.005, rest_offset=0.0),
-            ),
-            init_state=ArticulationCfg.InitialStateCfg(
-                joint_pos={
-                    "panda_joint1": -0.4536,
-                    "panda_joint2": 0.1362,
-                    "panda_joint3": 0.3922,
-                    "panda_joint4": -2.3182,
-                    "panda_joint5": -0.1029,
-                    "panda_joint6": 2.223,
-                    "panda_joint7": 0.7862,
-                    "panda_finger_joint1": 0.04,
-                    "panda_finger_joint2": 0.04,
-                },
-                pos=(0.0, 0.0, 0.0),
-                rot=(1.0, 0.0, 0.0, 0.0),
-            ),
-            actuators={
-                "panda_shoulder": ImplicitActuatorCfg(
-                    joint_names_expr=["panda_joint[1-4]"],
-                    stiffness=15.0,
-                    damping=8.0,
-                    friction=0.0,
-                    armature=0.0,
-                    effort_limit_sim=87,
-                    velocity_limit_sim=124.6,
-                ),
-                "panda_forearm": ImplicitActuatorCfg(
-                    joint_names_expr=["panda_joint[5-7]"],
-                    stiffness=15.0,
-                    damping=8.0,
-                    friction=0.0,
-                    armature=0.0,
-                    effort_limit_sim=12,
-                    velocity_limit_sim=149.5,
-                ),
-                "panda_hand": ImplicitActuatorCfg(
-                    joint_names_expr=["panda_finger_joint[1-2]"],
-                    effort_limit_sim=200.0,
-                    velocity_limit_sim=0.05,
-                    stiffness=2000.0,
-                    damping=173.0,
-                    friction=0.1,
-                    armature=0.0,
-                ),
-            },
-        )
-        '''
         solver_count = 48
         self.scene.robot = ArticulationCfg(
             prim_path="{ENV_REGEX_NS}/Robot",
@@ -302,9 +232,7 @@ class TactileFrankaStackEnvCfg(StackEnvCfg):
 
         # Add tactile sensors to the scene
         if self.enable_sensor:
-            self.left_tactile_sensor.enable_camera_tactile = True
             self.left_tactile_sensor.enable_force_field = True
-            self.right_tactile_sensor.enable_camera_tactile = True
             self.right_tactile_sensor.enable_force_field = True
             self.scene.left_tactile_sensor = self.left_tactile_sensor
             self.scene.right_tactile_sensor = self.right_tactile_sensor

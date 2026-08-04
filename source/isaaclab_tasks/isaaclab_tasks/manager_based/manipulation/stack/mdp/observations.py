@@ -496,3 +496,23 @@ def tactile_shear_force(
         H, W = sensor.cfg.tactile_array_size
         return torch.zeros(env.num_envs, H * W * 2, dtype=torch.float32, device=env.device)
     return sensor.data.tactile_shear_force.reshape(env.num_envs, -1)
+
+
+def tactile_embedding(
+    env: ManagerBasedRLEnv,
+    dim: int,
+) -> torch.Tensor:
+    """Frozen tactile-AE latent — the two force fields compressed to `dim` floats.
+
+    `dim` is required because the observation manager sizes every term by
+    calling it once while the env is still being constructed, before the
+    encoder is loaded; it must equal 2*per_hand_dim of the checkpoint (the env
+    raises on mismatch). Zeros stand in until the encoder is live and the
+    sensors have produced their first render.
+    """
+    embedding = None
+    if hasattr(env, "compute_tactile_embedding"):
+        embedding = env.compute_tactile_embedding()
+    if embedding is None:
+        return torch.zeros(env.num_envs, dim, dtype=torch.float32, device=env.device)
+    return embedding

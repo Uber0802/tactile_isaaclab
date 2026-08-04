@@ -4,34 +4,53 @@
 
 set -e
 
-CKPTS_DIR=~/ml/tactile-irl/tactile_isaaclab/nn
-BASE_SAVE_DIR=./tactile_dataset/stack_box/curriculum_multipos
+CKPTS_DIR=/mnt/scratch/kimnai/research/tarl/logs/rl_games/franka_stack/2026-06-22_22-05-03/nn/
+BASE_SAVE_DIR=/mnt/scratch/kimnai/research/tarl/tactile_dataset/stack_box/singlepos_v3
 
-#Curriculum spectrum: sample snapshots across the whole skill range.
-#Set CKPT_STRIDE=1 to roll out EVERY checkpoint (77 snapshots),
-#or CKPT_STRIDE=4 for a quicker sparse rollout (~20 snapshots).
-CKPTS=(
-    "last_franka_stack_ep_100_rew_6.677147.pth"
-    "last_franka_stack_ep_400_rew_7.2512236.pth"
-    "last_franka_stack_ep_700_rew_7.757937.pth"
-    "last_franka_stack_ep_1000_rew_8.924516.pth"
-    "last_franka_stack_ep_1300_rew_11.001369.pth"
-    "last_franka_stack_ep_1600_rew_12.429459.pth"
-    "last_franka_stack_ep_1900_rew_13.496348.pth"
-    "last_franka_stack_ep_2200_rew_14.337699.pth"
-    "last_franka_stack_ep_2500_rew_17.27967.pth"
-    "last_franka_stack_ep_2800_rew_19.043896.pth"
-    "last_franka_stack_ep_3100_rew_22.553942.pth"
-    "last_franka_stack_ep_3400_rew_25.260508.pth"
-    "last_franka_stack_ep_3700_rew_28.634111.pth"
-    "last_franka_stack_ep_4000_rew_29.927746.pth"
-    "last_franka_stack_ep_4300_rew_37.87523.pth"
-    "last_franka_stack_ep_4600_rew_39.98565.pth"
-    "last_franka_stack_ep_4900_rew_51.786015.pth"
-    "last_franka_stack_ep_5200_rew_52.69835.pth"
-    "last_franka_stack_ep_5500_rew_50.053093.pth"
-    "last_franka_stack_ep_5700_rew_73.564156.pth"
-)
+# Uniformly sample checkpoints across the episode range from the whole given directory.
+NUM_SAMPLES=100
+
+CKPTS=($(python3 -c "
+import os, re
+ckpts_dir = os.path.expanduser('$CKPTS_DIR')
+num_samples = int('$NUM_SAMPLES')
+files = {}
+if os.path.isdir(ckpts_dir):
+    for f in os.listdir(ckpts_dir):
+        if f.endswith('.pth'):
+            match = re.search(r'ep_(\d+)', f)
+            if match:
+                files[int(match.group(1))] = f
+if files:
+    n = min(num_samples, len(files))
+    if n <= 1:
+        sampled = files
+    else:
+        indices = [i * 100 for i in range(1, 101)]
+        seen = set()
+        sampled = []
+        for idx in indices:
+            if idx not in seen:
+                seen.add(idx)
+                sampled.append(files[idx])
+    for f in sampled:
+        print(f)
+"))
+
+
+if [ ${#CKPTS[@]} -eq 0 ]; then
+    echo "Error: No checkpoints found matching 'ep_[0-9]+' in $CKPTS_DIR"
+    exit 1
+fi
+
+if [ "$1" = "--dry-run" ] || [ "$1" = "-d" ]; then
+    echo "Dry run. Selected $NUM_SAMPLES checkpoints to run:"
+    for ckpt_name in "${CKPTS[@]}"; do
+        echo "  $ckpt_name"
+    done
+    exit 0
+fi
+
 
 
 # ITERS_PER_CKPT = EPISODES_PER_ENV * 2 ensures each env completes at least EPISODES_PER_ENV episodes per checkpoint
@@ -57,17 +76,17 @@ for ckpt_name in "${CKPTS[@]}"; do
     mkdir -p "$save_dir"
     echo "==== [$label] ckpt=$ckpt_name → $save_dir  (max_epochs=$max_iters_abs) ===="
 
-    FORGE_FIXED_OBJECT_POS=0 \
+    FORGE_FIXED_OBJECT_POS=1 \
     FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
     FORGE_SAVE_TACTILE_ALL_ENVS=1 \
-    FORGE_ENABLE_FRONT_CAM=1 \
+    FORGE_ENABLE_SENSOR=1 \
     FORGE_TACTILE_SAVE_DIR="$save_dir" \
     FORGE_TACTILE_EPISODES_PER_ENV=$EPISODES_PER_ENV \
     FORGE_TACTILE_REWARD_INSTRUCTION="grasp the blue box and stack it on the red box" \
     ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
         --task Isaac-Stack-Cube-Franka-Gelsight-v0 \
         --checkpoint "$ckpt_path" \
-        --num_envs 32 \
+        --num_envs 128 \
         --max_iterations $max_iters_abs \
         --enable_cameras \
         --headless \
