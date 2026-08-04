@@ -111,8 +111,10 @@ class ForgeGearMeshPickPlace(ForgeGearMesh):
     # Z-proximity gate on r_yaw — exp(-z_dist / scale). Only reward yaw
     # alignment once the gear is genuinely close to the meshing pose, so the
     # policy doesn't spin the gripper at 5 cm height while ignoring descent.
-    # z_dist=0 → 1.0 (full reward), z_dist=2 cm → 0.37, z_dist=5 cm → 0.08.
-    yaw_z_gate_scale: float = 0.02
+    # 2026-07-14: widened 0.02 → 0.05 so the yaw gradient is alive during
+    # transport (z_dist=5 cm → 0.37 instead of 0.08); the hover-trap this
+    # guarded against is now handled by the dense depth reward.
+    yaw_z_gate_scale: float = 0.05
 
     # Dense depth reward — pulls gear from "hover above bolt" past the
     # success boundary. Linear from 0 at z_disp=0 (target z) to 1 at
@@ -121,16 +123,31 @@ class ForgeGearMeshPickPlace(ForgeGearMesh):
     # success criterion — forces "align xy first, then press down". Big scale
     # (1.0) so the descent step dominates the "hover trap".
     depth_reward_scale: float = 1.0
-    # Window above target z (m) over which r_depth ramps from 0 to 1. At
-    # gear_z = +depth_approach_scale the reward is 0; at gear_z = 0 (target)
-    # it reaches 1; below target stays saturated at 1. Pick 20 mm so the
-    # ramp covers the policy's typical "hover-above-bolt" plateau (+9 mm) —
-    # gear at +9 mm gets reward ~0.55, encouraging continued descent.
+    # Window above target z (m) over which r_depth starts ramping. At
+    # gear_z = +depth_approach_scale the reward is 0.
     depth_approach_scale: float = 0.02
+    # Depth below target z (m) at which r_depth reaches its max of 1.0 (the gear
+    # is "seated"). 2026-07-27: added so r_depth keeps a downward gradient PAST
+    # the target plane instead of saturating at z=0. Previously the ramp hit 1.0
+    # at the target plane and went flat below it, so the policy learned to rest
+    # exactly at z_disp≈0 (engaged but not seated) — and success (which needs
+    # z_disp < 0) never fired. Now r_depth is a single continuous ramp:
+    #   z = +depth_approach_scale (2 cm above) → 0
+    #   z = 0 (target plane)                   → 0.8  (still climbing, not flat)
+    #   z = -depth_seat_scale (5 mm below)     → 1.0  (seated)
+    # so there is a constant downward pull all the way through the plane. Keep
+    # it aligned with success_threshold (-0.1 ≈ 5 mm) so the reward saturates
+    # right where success fires.
+    depth_seat_scale: float = 0.005
 
-    # Strict XY gate matching the success-criterion xy threshold (2.5 mm).
-    # `exp(-xy / 0.0025)`: xy=2.5 mm → 0.37, xy=5 mm → 0.14, xy=10 mm → 0.018.
-    # Used for r_z_descend and r_depth so z-progress reward only fires when
-    # the gear is inside the success xy region. Differentiable so the policy
-    # gets gradient even slightly outside, but >5 mm the gate is effectively 0.
-    xy_strict_gate_scale: float = 0.0025
+    # XY gate on the z-progress rewards (r_z_descend, r_depth).
+    # 2026-07-14: widened 0.0025 -> 0.0075. Matching the gate to the 2.5 mm
+    # success criterion made it a winner-take-all cliff: r_depth carries the
+    # largest weight (1.0) and r_z_descend 0.3, and both were multiplied by
+    # exp(-xy/0.0025), which is ~0.09 at xy=6 mm. Episodes that ended even
+    # slightly wide got essentially no "press down" gradient, so they could
+    # never recover — success went bimodal (~52% nail it, ~48% stuck outside
+    # with no signal) and plateaued. The success *criterion* should not double
+    # as the *learning* gate. At 0.0075: xy=2.5 mm → 0.72, 6 mm → 0.45,
+    # 10 mm → 0.26 — near-misses keep a usable pull inward and down.
+    xy_strict_gate_scale: float = 0.0075

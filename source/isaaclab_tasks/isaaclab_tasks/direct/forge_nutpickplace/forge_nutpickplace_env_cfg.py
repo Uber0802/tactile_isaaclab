@@ -120,13 +120,18 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         if baseline == "single_pos":
             self._apply_baseline_single_pos()
             return
+        if baseline == "A_hard_success_single_pos":
+            self._apply_baseline_A_hard_success_single_pos()
+            return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskNutThreadPickPlaceCfg. "
             f"Implemented: A (frozen), A_hard (A obs + yaw_reward=0 + wider pose noise), "
             f"A_hard_success (A_hard + success requires one thread pitch deep), "
             f"B (tactile force fields), "
             f"B2 (frozen ReWiND CNN -> 768-dim embedding), "
-            f"single_pos (A obs + all reset position randomization zeroed)."
+            f"single_pos (A obs + all reset position randomization zeroed), "
+            f"A_hard_success_single_pos (A_hard_success + poses zeroed; "
+            f"deterministic rollouts that keep the -3.5 success criterion)."
         )
 
     def _apply_baseline_B(self) -> None:
@@ -232,6 +237,42 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         the same pose every episode. Used for collecting deterministic tactile
         trajectories. Only mutates this cfg instance — does not affect A/B/B2.
         """
+        self.task.fixed_asset_init_pos_noise = [0.0, 0.0, 0.0]
+        self.task.fixed_asset_init_orn_range_deg = 0.0
+        self.task.nut_table_pos_noise = [0.0, 0.0, 0.0]
+        self.task.nut_table_yaw_range = 0.0
+        self.task.hand_init_pos_noise = [0.0, 0.0, 0.0]
+        self.task.hand_init_orn_noise = [0.0, 0.0, 0.0]
+
+    def _apply_baseline_A_hard_success_single_pos(self) -> None:
+        """Deterministic-pose rollouts for an A_hard_success policy.
+
+        Plain `single_pos` is NOT usable for collecting reward-model data from an
+        A_hard_success checkpoint, because it only zeroes the pose randomizers —
+        it leaves the task config at the frozen-A defaults for two fields that
+        change what gets recorded:
+
+          * `success_threshold` stays at nut_thread's default +0.375
+            (= thread_pitch * 0.375 = +0.75 mm, "nut barely touching the bolt
+            top"). The `Success` flag written into every saved .npy comes from
+            `ep_succeeded` -> `_get_curr_successes(self.cfg_task.success_threshold)`,
+            so the labels would use a criterion ~7.75 mm looser than the -3.5
+            (7 mm deep) the policy was trained and evaluated on. Nearly every
+            episode that reaches the bolt would be labelled success.
+          * `unidirectional_rot` reverts to nut_thread's default True, which
+            silently clamps positive commanded delta_yaw to 0 in
+            `_apply_action`. An A_hard_success policy was trained with it False,
+            so its rollout dynamics would differ from training.
+
+        This baseline therefore layers the pose zeroing on top of the full
+        A_hard_success config instead of replacing it: same reward shaping, same
+        success criterion, same action semantics, only the reset distribution
+        collapses to a single pose.
+        """
+        self._apply_baseline_A_hard_success()
+        # Same six randomizers as `_apply_baseline_single_pos`, applied AFTER
+        # A_hard_success so its wider hand/bolt noise is overwritten, not the
+        # other way round.
         self.task.fixed_asset_init_pos_noise = [0.0, 0.0, 0.0]
         self.task.fixed_asset_init_orn_range_deg = 0.0
         self.task.nut_table_pos_noise = [0.0, 0.0, 0.0]

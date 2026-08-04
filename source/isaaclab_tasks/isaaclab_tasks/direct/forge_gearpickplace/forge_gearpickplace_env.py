@@ -417,17 +417,26 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         # so the policy only spends "yaw budget" once the gear is genuinely
         # close to the meshing pose:
         #   - r_lift: gear must be picked up (no farming yaw on the table)
-        #   - xy_coarse: gear roughly over the bolt
-        #   - z_close: gear within ~2 cm of the success-boundary z
-        # Without the z gate, policy was pulled to correct yaw while still
-        # hovering 5+ cm above the bolt, ignoring approach/lift/descent and
-        # never actually progressing to meshing.
+        #   - xy_coarse: gear roughly over the bolt (5 cm scale)
+        #   - z_close: gear near the success-boundary z (5 cm scale)
+        #
+        # 2026-07-14: the gates were far too tight and deadlocked the baseline.
+        # The code used `xy_sharp` (1 cm scale) even though the comment said
+        # xy_coarse, and z_close used a 2 cm scale. With the gear typically
+        # 5.9 cm out, that gave xy_sharp≈0.03 vs xy_coarse≈0.37 — so r_yaw
+        # collapsed to ~0.001 and the yaw term was effectively dead.
+        # That inverts the physics: the teeth collide unless yaw is aligned
+        # FIRST, so xy/z can never close — but the reward only paid for yaw
+        # AFTER xy/z had closed. Chicken-and-egg → baseline stuck at 0%.
+        # Fix: gate on xy_coarse and widen yaw_z_gate_scale so the policy can
+        # correct yaw during transport. The hover-trap this originally guarded
+        # against is now handled by the dense depth reward (8) below.
         _, _, fixed_yaw = torch_utils.get_euler_xyz(self.fixed_quat)
         _, _, gear_yaw = torch_utils.get_euler_xyz(self.held_quat)
         yaw_diff = gear_yaw - fixed_yaw
         yaw_diff = torch.atan2(torch.sin(yaw_diff), torch.cos(yaw_diff))  # wrap to [-pi, pi]
         z_close = torch.exp(-z_dist / self.cfg_task.yaw_z_gate_scale)
-        r_yaw = r_lift * xy_sharp * z_close * torch.exp(-torch.abs(yaw_diff) / self.cfg_task.yaw_alignment_scale)
+        r_yaw = r_lift * xy_coarse * z_close * torch.exp(-torch.abs(yaw_diff) / self.cfg_task.yaw_alignment_scale)
 
         # (8) Dense depth reward — break the "hover above bolt" local optimum.
         # Policy was stalling at gear_above_target_z ≈ +9 mm with everything
@@ -440,21 +449,25 @@ class ForgeGearMeshPickPlaceEnv(ForgeEnv):
         # down. xy_strict gate prevents pressing gear to the floor far from the
         # bolt.
         # 2026-05-28: redesigned r_depth to reward APPROACHING target z too,
-        # not just descending past it. Previous form (clamp(depth_below_target
-        # / ideal_depth, 0, 1)) was 0 for any z > 0 — policy got no gradient
-        # while still hovering above the bolt, so it never bootstrapped into
-        # the descent regime. New form is a single linear ramp:
+        # not just descending past it.
+        # 2026-07-27: extended the ramp PAST the target plane so it keeps a
+        # downward gradient below z=0 instead of saturating there. The old form
+        # (1 - clamp(gear_above,min=0)/approach) hit 1.0 at the plane and went
+        # flat below it — so the policy rested at z_disp≈0 (engaged but not
+        # seated) and success (z_disp<0) never fired. New form is a single
+        # continuous ramp from +approach (0) through the plane to -seat (1.0):
         #
-        #   z = +depth_approach_scale  (e.g. +20 mm) → 0
-        #   z = 0  (target)                          → 1.0
-        #   z < 0  (below target / inside success)   → saturated 1.0
+        #   z = +depth_approach_scale (2 cm above) → 0
+        #   z = 0  (target plane)                  → approach/(approach+seat) ≈ 0.8
+        #   z = -depth_seat_scale (5 mm below)     → 1.0  (seated)
+        #   z < -depth_seat_scale                  → clamped 1.0
         #
-        # so gear at +9 mm now contributes r_depth ≈ 0.55 → continuous pull
-        # down toward target. Once it crosses 0, the term stays at full and
-        # other shaping / curr_success take over.
-        depth_approach_scale = self.cfg_task.depth_approach_scale
+        # slope is constant and negative in z, so there is a continuous pull to
+        # press down through the plane until the gear seats.
+        approach = self.cfg_task.depth_approach_scale
+        seat = self.cfg_task.depth_seat_scale
         r_depth = r_lift * xy_strict * torch.clamp(
-            1.0 - torch.clamp(gear_above_target_z, min=0.0) / depth_approach_scale,
+            (approach - gear_above_target_z) / (approach + seat),
             0.0, 1.0,
         )
         # Diagnostic only — how far past target the gear has actually pushed.

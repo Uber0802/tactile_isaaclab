@@ -17,9 +17,8 @@ TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
 FORGE_TACTILE_REWARD_CKPT=/mnt/lab-tank/uber/Tactile-Reward/exp_taskcompare/gear_scratch/gear_scratch_epoch18.pth \
-FORGE_TACTILE_REWARD_LOG_DIR=/mnt/lab-home/tactile/tactile_isaaclab/logs/tactile_curves/GearMesh_TacReward_hard_success_0.3 \
-FORGE_TACTILE_REWARD_SCALE=0.1 \
-FORGE_TACTILE_REWARD_SMOOTH_ALPHA=0.2 \
+FORGE_TACTILE_REWARD_LOG_DIR=/mnt/lab-home/tactile/tactile_isaaclab/logs/tactile_curves/GearMesh_TacReward_hard_success_0.175 \
+FORGE_TACTILE_REWARD_SCALE=0.175 \
 FORGE_TACTILE_REWARD_INSTRUCTION="pick up the gear and mesh it onto the shaft" \
 FORGE_TACTILE_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-party/Tactile-ReWiND \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
@@ -32,6 +31,6 @@ FORGE_TACTILE_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-part
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name GearMesh_PickPlace_baselineTacReward_hard_success_0.1 \
-    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineTacReward_hard_success_0.1 \
+    --wandb-name GearMesh_PickPlace_baselineTacReward_hard_success_0.175 \
+    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineTacReward_hard_success_0.175 \
     agent.params.config.save_frequency=20

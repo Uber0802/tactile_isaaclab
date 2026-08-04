@@ -192,13 +192,19 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         shaping in place. History:
           - `-1.0` (full 50 mm): all 3 runs plateau 0% × 12h
           - `-0.3` (15 mm):    25+ h still 0%, hover-trap
-          - `-0.1` (5 mm):     new target — first-tooth-mesh
+          - `-0.1` (5 mm):     still 0% — engaged/aligned (yaw~6deg, curr_engaged
+                               ~0.82 w/ tactile) but only reached ~1mm depth, so
+                               the 5mm gate never fired. success=0 was a
+                               measurement artifact, not a learning failure.
           - `+0.05`:           original "barely touching", trivial
+        2026-07-11: -0.1 -> 0.0. The tactile policy meshes at the target plane
+        (yaw aligned so teeth actually engage) but can't drive 5mm deeper;
+        count "reached target with teeth engaged" as success.
         """
         # Reuse A_hard ablations (yaw_reward = 0).
         self._apply_baseline_A_hard()
-        # 5 mm below target z (~10% of shaft) — first-tooth mesh.
-        self.task.success_threshold = -0.1
+        # At/below target z — teeth engaged at the shaft top counts as success.
+        self.task.success_threshold = 0.0
         # Fix yaw randomization to match the tactile-reward-model training
         # distribution. The curriculum dataset was collected with `single_pos`
         # (gear_table_yaw_range = 0, fixed_asset_init_orn_range_deg = 0), so
@@ -235,7 +241,18 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         # making yaw the dominant dense reward (which created a "hover above
         # bolt with yaw locked" local optimum). 2026-05-26: 1.0 → 0.3 to leave
         # room for the new dense depth reward to dominate "press down" budget.
-        self.task.yaw_reward_scale = 0.3
+        # 2026-07-17: 0.3 → 0.6. After the r_yaw gate fix (xy_coarse + wider
+        # z gate) the yaw term became live but its weighted contribution (~0.026)
+        # was too small vs lift/descent — baseline crawled from 67°→35° over
+        # 1000 iters and stalled before reaching the ~6° meshing angle. 0.6
+        # gives yaw enough budget to converge (slow but solvable) while still
+        # below the depth reward's 1.0 so it can't reward-hack yaw over descent.
+        # 2026-07-20: 0.6 → 0.45. At 0.6 (+ entropy 0.005) the no-tactile
+        # baseline reached ~38% by iter 690 — too easy, leaving no headroom for
+        # tactile to show a learning-speed advantage. Data points: 0.3 never
+        # solved (stalled at 35°), 0.6 solved fast; 0.45 targets "slow but
+        # solvable" so the tactile run's earlier crack is a clear win.
+        self.task.yaw_reward_scale = 0.5
         self.task.yaw_alignment_scale = 0.5
 
     def _apply_baseline_single_pos(self) -> None:

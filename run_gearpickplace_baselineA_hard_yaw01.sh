@@ -20,13 +20,14 @@ FORGE_SKIP_TACTILE_SENSORS=1 \
     --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
     --baseline A_hard_success_yaw01 \
     --headless \
+    --seed 3 \
     --num_envs 256 \
     --max_iterations 10000 \
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name GearMesh_PickPlace_baselineA_hard_success_yaw01_yawinput \
-    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineA_hard_success_yaw01_yawinput \
+    --wandb-name GearMesh_PickPlace_baselineA_hard_success_yaw01_yawinput0.5_seed3 \
+    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineA_hard_success_yaw01_yawinput0.5_seed3 \
     agent.params.config.save_frequency=20 \
-    agent.params.config.entropy_coef=0.02 \
+    agent.params.config.entropy_coef=0.005 \
     agent.params.network.space.continuous.sigma_init.val=0.5

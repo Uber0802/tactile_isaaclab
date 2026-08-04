@@ -20,6 +20,7 @@ FORGE_SKIP_TACTILE_SENSORS=1 \
     --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
     --baseline A_hard_success \
     --headless \
+    --seed 0 \
     --num_envs 256 \
     --max_iterations 10000 \
     --track \

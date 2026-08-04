@@ -448,7 +448,10 @@ def main():
             raise FileNotFoundError(f"data_dir does not exist: {d}")
         # Recursive glob handles both flat (peg) and ep_XXX-nested (gear/nut curriculum).
         files.extend(glob.glob(os.path.join(d, "**", "*.npy"), recursive=True))
-    files = sorted(files)
+    # Paired datasets store an `<ep>_camera.npy` next to each tactile episode
+    # ({"Camera": (T,224,224,3) uint8}). Drop them before loading — they have no
+    # "Tactile" key and are ~25x larger.
+    files = sorted(p for p in files if not p.endswith("_camera.npy"))
     print(f"[finetune] scanning {len(files)} files across {len(args.data_dirs)} dir(s)")
     if args.max_episodes and len(files) > args.max_episodes:
         rng = random.Random(args.seed)
@@ -461,6 +464,8 @@ def main():
             d = np.load(p, allow_pickle=True).item()
         except Exception as e:
             print(f"  skip {p}: {e}", file=sys.stderr)
+            continue
+        if "Tactile" not in d:
             continue
         tac = d["Tactile"]
         # kimnai/curriculum-style data is (T, 20, 25, 6) with channel order
