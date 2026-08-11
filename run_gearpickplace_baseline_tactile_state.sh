@@ -31,7 +31,7 @@ FORGE_TACTILE_ENCODER_CKPT=/vault/gear_ae_16/ae_best.pth \
 FORGE_TACTILE_ENCODER_DIM=32 \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
-    --baseline raw_tactile \
+    --baseline tactile_state \
     --headless \
     --num_envs 256 \
     --seed 0 \
