@@ -27,7 +27,7 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-FORGE_TACTILE_ENCODER_CKPT=/mnt/scratch/kimnai/research/tarl/ae_16/ae_best.pth \
+FORGE_TACTILE_ENCODER_CKPT=/mnt/scratch/kimnai/research/tarl/gear_ae_16/ae_best.pth \
 FORGE_TACTILE_ENCODER_DIM=32 \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
