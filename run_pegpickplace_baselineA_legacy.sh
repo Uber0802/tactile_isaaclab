@@ -27,6 +27,6 @@ TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name PegInsert_PickPlace_baselineA_legacy_seed2 \
-    agent.params.config.full_experiment_name=PegInsert_PickPlace_baselineA_legacy_seed2 \
+    --wandb-name PegInsert_PickPlace_baselineA_legacy_seed2_new \
+    agent.params.config.full_experiment_name=PegInsert_PickPlace_baselineA_legacy_seed2_new \
     agent.params.config.save_frequency=200

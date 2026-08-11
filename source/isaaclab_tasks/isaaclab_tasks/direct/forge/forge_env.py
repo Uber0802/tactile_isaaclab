@@ -417,6 +417,9 @@ class ForgeEnv(FactoryEnv):
             FORGE_VISUAL_REWARD_SMOOTH_ALPHA (float, default 1.0 = no EMA)
             FORGE_VISUAL_REWARD_BACKBONE     (default "dinov2_vitb14")
             FORGE_VISUAL_REWARD_DINO_INTERVAL (int, default 1)
+            FORGE_VISUAL_REWARD_AMP          (off|bf16|fp16, default bf16 —
+                                              backbone autocast; bf16 is ~8x
+                                              faster than fp32 at 256 envs)
                                               Run DINOv2 every N sim steps and
                                               reuse features in between.
                                               Set to 4-8 if DINOv2 is slow.
@@ -523,6 +526,28 @@ class ForgeEnv(FactoryEnv):
         )
         self._visual_reward_scale = float(
             os.getenv("FORGE_VISUAL_REWARD_SCALE", "1.0"))
+        # Optional scale annealing, mirroring the tactile reward's schedule so a
+        # visual-vs-tactile ablation can hold the schedule constant. Defaults
+        # (ANNEAL_STEPS=0) leave the scale fixed — existing runs are unaffected.
+        #   FORGE_VISUAL_REWARD_SCALE_END               target scale (default = start)
+        #   FORGE_VISUAL_REWARD_ANNEAL_STEPS            env control steps to ramp over
+        #   FORGE_VISUAL_REWARD_ANNEAL_MODE             "linear" | "success"
+        #   FORGE_VISUAL_REWARD_ANNEAL_SUCCESS_THRESH   success EMA that fires "success" mode
+        #   FORGE_VISUAL_REWARD_ANNEAL_SUCCESS_EMA_ALPHA EMA smoothing on that rate
+        self._visual_reward_scale_start = self._visual_reward_scale
+        self._visual_reward_scale_end = float(
+            os.getenv("FORGE_VISUAL_REWARD_SCALE_END", str(self._visual_reward_scale)))
+        self._visual_reward_anneal_steps = int(
+            os.getenv("FORGE_VISUAL_REWARD_ANNEAL_STEPS", "0"))
+        self._visual_anneal_step = 0
+        self._visual_anneal_mode = os.getenv(
+            "FORGE_VISUAL_REWARD_ANNEAL_MODE", "linear").strip().lower()
+        self._visual_anneal_success_thresh = float(
+            os.getenv("FORGE_VISUAL_REWARD_ANNEAL_SUCCESS_THRESH", "0.01"))
+        self._visual_anneal_success_ema_alpha = float(
+            os.getenv("FORGE_VISUAL_REWARD_ANNEAL_SUCCESS_EMA_ALPHA", "0.1"))
+        self._visual_anneal_success_ema = 0.0
+        self._visual_anneal_triggered = False
         self._visual_reward_smooth_alpha = float(
             os.getenv("FORGE_VISUAL_REWARD_SMOOTH_ALPHA", "1.0"))
         self._visual_smoothed_progress = torch.zeros(
@@ -530,6 +555,13 @@ class ForgeEnv(FactoryEnv):
         )
         self._visual_dino_interval = max(
             1, int(os.getenv("FORGE_VISUAL_REWARD_DINO_INTERVAL", "1")))
+        # Autocast dtype for the frozen backbone. Defaults to bf16 — see the
+        # benchmark note in _compute_visual_reward for why.
+        _amp = os.getenv("FORGE_VISUAL_REWARD_AMP", "bf16").strip().lower()
+        self._visual_amp_dtype = {
+            "off": None, "none": None, "fp32": None,
+            "bf16": torch.bfloat16, "fp16": torch.float16,
+        }.get(_amp, torch.bfloat16)
         self._visual_dino_step_counter = 0
         self._visual_last_features = torch.zeros(
             self.num_envs, 768, device=self.device, dtype=torch.float32,
@@ -540,7 +572,8 @@ class ForgeEnv(FactoryEnv):
               f"backbone={backbone_name}  instruction={instruction!r}  "
               f"history={self._visual_history_length}  max_length={max_length}  "
               f"smooth_alpha={self._visual_reward_smooth_alpha}  "
-              f"dino_interval={self._visual_dino_interval}")
+              f"dino_interval={self._visual_dino_interval}  "
+              f"amp={_amp}")
 
     def _compute_visual_reward(self) -> torch.Tensor:
         """(num_envs,) predicted visual progress as a dense reward bonus."""
@@ -553,10 +586,21 @@ class ForgeEnv(FactoryEnv):
         # Run DINOv2 only every `dino_interval` steps to amortise cost.
         self._visual_dino_step_counter += 1
         if self._visual_dino_step_counter % self._visual_dino_interval == 0:
-            with torch.no_grad():
+            # The ViT-B/14 forward dominates this whole function: at 256 envs it
+            # measures 768 ms/control-step in fp32 vs 98 ms under bf16 autocast
+            # (RTX 6000 Ada) — i.e. fp32 roughly DOUBLES total step time for a
+            # camera run. bf16 costs 3.6e-4 mean cosine distance on the features
+            # and ~0.002 mean absolute progress, and it is also what
+            # precompute_dino_features.py used to build the training features,
+            # so it matches train-time conditions more closely than fp32 does.
+            # FORGE_VISUAL_REWARD_AMP=off restores the fp32 path.
+            with torch.no_grad(), torch.amp.autocast(
+                    device_type="cuda", dtype=self._visual_amp_dtype,
+                    enabled=self._visual_amp_dtype is not None):
                 rgb = rgb_raw.permute(0, 3, 1, 2).float() / 255.0
                 rgb = (rgb - self._dino_mean) / self._dino_std
                 features = self._visual_backbone(rgb)        # (B, 768)
+            features = features.float()
             self._visual_last_features = features
         else:
             features = self._visual_last_features
@@ -606,6 +650,29 @@ class ForgeEnv(FactoryEnv):
         else:
             self._visual_smoothed_progress = latest
             out = latest
+
+        # Anneal the scale (no-op when anneal_steps <= 0 or end == start).
+        # Same schedule as _compute_tactile_reward's block below.
+        if self._visual_reward_anneal_steps > 0:
+            ramping = True
+            if self._visual_anneal_mode == "success" and not self._visual_anneal_triggered:
+                if self._visual_anneal_success_ema >= self._visual_anneal_success_thresh:
+                    self._visual_anneal_triggered = True
+                    print(f"[VisualReward] success anneal TRIGGERED "
+                          f"(success_ema={self._visual_anneal_success_ema:.4f} "
+                          f">= {self._visual_anneal_success_thresh}); decaying "
+                          f"{self._visual_reward_scale_start}->"
+                          f"{self._visual_reward_scale_end} over "
+                          f"{self._visual_reward_anneal_steps} steps")
+                else:
+                    ramping = False
+            if ramping:
+                frac = min(1.0, self._visual_anneal_step / self._visual_reward_anneal_steps)
+                self._visual_reward_scale = (
+                    self._visual_reward_scale_start
+                    + (self._visual_reward_scale_end - self._visual_reward_scale_start) * frac
+                )
+                self._visual_anneal_step += 1
         return out * self._visual_reward_scale
 
     def _compute_tactile_reward(self) -> torch.Tensor:
@@ -1539,6 +1606,14 @@ class ForgeEnv(FactoryEnv):
                 a = self._tactile_anneal_success_ema_alpha
                 self._tactile_anneal_success_ema = (
                     a * batch_rate + (1.0 - a) * self._tactile_anneal_success_ema
+                )
+            # Same estimate for the visual annealer (independent state, so both
+            # reward heads can anneal in the same run).
+            if getattr(self, "_visual_reward_enabled", False):
+                batch_rate = self.ep_succeeded[reset_env_ids].float().mean().item()
+                a = self._visual_anneal_success_ema_alpha
+                self._visual_anneal_success_ema = (
+                    a * batch_rate + (1.0 - a) * self._visual_anneal_success_ema
                 )
 
             # Only log once every env has reported for this episode.
