@@ -27,16 +27,16 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-FORGE_TACTILE_REWARD_CKPT=/mnt/tank/tactile/Tactile-Reward/exp_gear_seed2/gear_seed2_scratch/gear_seed2_scratch_epoch29.pth \
-FORGE_TACTILE_REWARD_LOG_DIR=/mnt/home/tactile/tactile_isaaclab/logs/tactile_curves/GearMesh_TacReward_hard_success_yaw01_0.3 \
+FORGE_TACTILE_REWARD_CKPT=/vault/gear_seed2_scratch_epoch29.pth \
+FORGE_TACTILE_REWARD_LOG_DIR=/workspace/tactile_isaaclab/logs/tactile_curves/GearMesh_TacReward_hard_success_yaw01_0.3 \
 FORGE_TACTILE_REWARD_SCALE=0.2 \
 FORGE_TACTILE_REWARD_SCALE_END=0.0 \
 FORGE_TACTILE_REWARD_ANNEAL_MODE=success \
 FORGE_TACTILE_REWARD_ANNEAL_SUCCESS_THRESH=0.1 \
 FORGE_TACTILE_REWARD_ANNEAL_STEPS=25600 \
 FORGE_TACTILE_REWARD_INSTRUCTION="pick up the gear and mesh it onto the shaft" \
-FORGE_TACTILE_REWARD_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-party/Tactile-ReWiND \
-FORGE_TACTILE_ENCODER_CKPT=/mnt/scratch/kimnai/research/tarl/gear_ae_16/ae_best.pth \
+FORGE_TACTILE_REWARD_ROOT=/workspace/tactile_isaaclab/external/third-party/Tactile-ReWiND \
+FORGE_TACTILE_ENCODER_CKPT=/vault/gear_ae_16/ae_best.pth \
 FORGE_TACTILE_ENCODER_DIM=32 \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
     --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
