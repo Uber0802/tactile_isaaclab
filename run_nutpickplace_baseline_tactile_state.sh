@@ -27,18 +27,18 @@ OV_CACHE_DIRECTORY="$CACHE_DIR/cache/ov" \
 TORCH_HOME="$CACHE_DIR/torch" \
 TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
-FORGE_TACTILE_ENCODER_CKPT=/mnt/scratch/kimnai/research/tarl/ae_16/ae_best.pth \
+FORGE_TACTILE_ENCODER_CKPT=/mnt/scratch/kimnai/research/tarl/nut_ae_16/ae_best.pth \
 FORGE_TACTILE_ENCODER_DIM=32 \
 ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
-    --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
-    --baseline raw_tactile \
+    --task Isaac-Forge-NutThread-PickPlace-Direct-v0 \
+    --baseline tactile_state \
     --headless \
-    --num_envs 128 \
-    --seed 0 \
-    --max_iterations 10000 \
+    --num_envs 256 \
+    --seed 2 \
+    --max_iterations 3500 \
     --track \
     --wandb-entity b06902045-national-taiwan-university \
     --wandb-project-name tactile-rewind \
-    --wandb-name PegInsert_PickPlace_baseline_raw_tactile32_seed0 \
-    agent.params.config.full_experiment_name=PegInsert_PickPlace_baseline_raw_tactile32_seed0 \
+    --wandb-name NutThread_PickPlace_baseline_tactile_state_seed2 \
+    agent.params.config.full_experiment_name=NutThread_PickPlace_baseline_tactile_state_seed2 \
     agent.params.config.save_frequency=100
