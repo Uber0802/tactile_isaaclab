@@ -6,13 +6,11 @@ from isaaclab.assets import RigidObjectCfg, ArticulationCfg
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
-from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.sensors import CameraCfg, FrameTransformerCfg, TiledCameraCfg
 from isaaclab.sensors.frame_transformer.frame_transformer_cfg import OffsetCfg
 from isaaclab.sim.schemas.schemas_cfg import RigidBodyPropertiesCfg
 from isaaclab.sim.spawners.from_files.from_files_cfg import UsdFileCfg
-from isaaclab.sim import MeshCollisionPropertiesCfg, SDFMeshPropertiesCfg
 from isaaclab.utils import configclass
 
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR

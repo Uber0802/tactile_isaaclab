@@ -95,7 +95,6 @@ class TactileRewardModel:
 
         model_cls = self._import_model_class(rewind_root)
         state = torch.load(ckpt_path, map_location=self.device, weights_only=False)
-        print('????????', state)
         cfg = state.get("args", {})
 
         cfg_shear = cfg.get("shear_channels", None)
