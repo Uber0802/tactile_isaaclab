@@ -4,7 +4,6 @@ import sys
 import copy
 import torch
 import numpy as np
-from pathlib import Path
 from typing import Sequence
 
 from isaaclab.envs import ManagerBasedRLEnv
@@ -12,30 +11,13 @@ from isaaclab_tasks.manager_based.manipulation.stack.stack_env_cfg import StackE
 from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab_tasks.manager_based.manipulation.stack.mdp import franka_stack_events
+from isaaclab_tasks.utils.tactile_reward_import import TactileRewardModel
 
-
-def _import_tactile_reward_model():
-    """Import ``TactileRewardModel``, adding the repo root to ``sys.path`` if needed.
-
-    ``tactile_reward_model/`` lives at the repository root, which is not on
-    ``sys.path`` when ``isaaclab_tasks`` is used as an installed package.
-    """
-    try:
-        from tactile_reward_model import TactileRewardModel
-        return TactileRewardModel
-    except ImportError:
-        pass
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "tactile_reward_model" / "tactile_reward_model.py").is_file():
-            sys.path.insert(0, str(parent))
-            from tactile_reward_model import TactileRewardModel
-            return TactileRewardModel
-    raise ImportError("could not locate the tactile_reward_model package")
 
 
 class StackTactileEnv(ManagerBasedRLEnv):
     def __init__(self, cfg: StackEnvCfg, render_mode: str | None = None, **kwargs):
-        if os.environ.get("FORGE_FIXED_OBJECT_POS", "0") == "1":
+        if getattr(cfg, "fixed_object_pos", False):
             if hasattr(cfg, "events") and hasattr(cfg.events, "randomize_cube_positions"):
                 delattr(cfg.events, "randomize_cube_positions")
                 cfg.events.randomize_cube_positions_1 = EventTerm(
@@ -66,13 +48,20 @@ class StackTactileEnv(ManagerBasedRLEnv):
         self.max_episode_success_rate = 0.0
 
         # Tactile saving settings (mirrored from ForgeEnv)
-        self._save_tactile_force_field = os.environ.get("FORGE_SAVE_TACTILE_FORCE_FIELD", "0") == "1"
-        self._save_tactile_all_envs = os.environ.get("FORGE_SAVE_TACTILE_ALL_ENVS", "0") == "1"
-        self._tactile_save_dir = os.environ.get("FORGE_TACTILE_SAVE_DIR", "./tactile_dataset/data")
-        self._tactile_save_interval = int(os.environ.get("FORGE_TACTILE_SAVE_INTERVAL", "1"))
-        self._tactile_reward_instruction = os.environ.get("FORGE_TACTILE_REWARD_INSTRUCTION", "stack an object on a box")
-        self._tactile_max_buffer_frames = int(os.environ.get("FORGE_TACTILE_MAX_BUFFER_FRAMES", "500000"))
-        self._tactile_episodes_per_env = int(os.environ.get("FORGE_TACTILE_EPISODES_PER_ENV", "0"))  # 0 = unlimited
+        save_cfg = self.cfg.tactile_save
+        self._save_tactile_force_field = bool(save_cfg.force_field)
+        self._save_tactile_all_envs = bool(save_cfg.all_envs)
+        self._tactile_save_dir = save_cfg.save_dir or "./tactile_dataset/data"
+        self._tactile_save_interval = max(1, int(save_cfg.save_interval))
+        # Labels the "Task" field of each saved episode. Shares the reward's
+        # instruction so a collected dataset is captioned with the same wording
+        # the reward model was conditioned on.
+        self._tactile_reward_instruction = (
+            getattr(self.cfg.tactile_reward, "instruction", None)
+            or "stack an object on a box"
+        )
+        self._tactile_max_buffer_frames = int(save_cfg.max_buffer_frames)
+        self._tactile_episodes_per_env = int(save_cfg.episodes_per_env)  # 0 = unlimited
 
         self._save_front_cam = self._save_tactile_force_field and ("front_cam" in self.scene.keys())
 
@@ -257,21 +246,22 @@ class StackTactileEnv(ManagerBasedRLEnv):
 
         All the machinery lives in `tactile_reward_model.TactileRewardModel`;
         this env supplies the per-step force field and owns the reward shaping.
-        Activated when env var FORGE_TACTILE_REWARD_CKPT points at a .pth — see
-        `TactileRewardModel.from_env` for the full list of knobs.
+        Configured through `cfg.tactile_reward`, e.g. on the CLI::
 
-        FORGE_TACTILE_REWARD_SCALE is read here rather than in the model: it is
-        a per-run sweep knob (the same task config is trained at different
-        scales), so it cannot live in the static RewTerm weight either.
+            env.tactile_reward.ckpt=/path/to/model.pth
+            env.tactile_reward.scale=0.3
+
+        An empty `ckpt` disables the reward. `scale` is applied here rather than
+        in the model: it is a per-run sweep knob (the same task config is trained
+        at different scales), so it cannot live in the static RewTerm weight.
         """
         self._tactile_reward_model = None
-        self._tactile_reward_scale = float(os.getenv("FORGE_TACTILE_REWARD_SCALE", "1.0"))
-        try:
-            TactileRewardModel = _import_tactile_reward_model()
-        except ImportError as e:
-            print(f"[TactileReward] disabled: {e}")
+        rew_cfg = self.cfg.tactile_reward
+        self._tactile_reward_scale = float(rew_cfg.scale)
+        if not (rew_cfg.ckpt or "").strip():
             return
-        self._tactile_reward_model = TactileRewardModel.from_env(
+        self._tactile_reward_model = TactileRewardModel.from_cfg(
+            rew_cfg,
             num_envs=self.num_envs,
             device=self.device,
             max_episode_length=int(getattr(self, "max_episode_length", 150)),

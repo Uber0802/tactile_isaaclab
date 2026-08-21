@@ -27,13 +27,13 @@ for BASELINE in single_pos baseline; do
     mkdir -p "$SAVE_DIR"
     echo "==== [$SUBDIR / $LABEL] baseline=$BASELINE → $SAVE_DIR ===="
 
-    FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
-    FORGE_SAVE_TACTILE_ALL_ENVS=1 \
-    FORGE_SAVE_CAMERA=1 \
     FORGE_ENABLE_FRONT_CAM=1 \
-    FORGE_TACTILE_EPISODES_PER_ENV=1 \
-    FORGE_TACTILE_SAVE_DIR="$SAVE_DIR" \
     ./isaaclab.sh -p "$TRAIN" \
+    "env.tactile_save.force_field=true" \
+    "env.tactile_save.all_envs=true" \
+    "env.tactile_save.camera=true" \
+    "env.tactile_save.episodes_per_env=1" \
+    "env.tactile_save.save_dir=$SAVE_DIR" \
         --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
         --baseline "$BASELINE" \
         --checkpoint "$CKPT_PATH" \

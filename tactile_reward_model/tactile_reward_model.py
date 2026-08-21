@@ -8,7 +8,8 @@ reward tensor back.
 
 Typical usage from an env::
 
-    self._tactile_reward_model = TactileRewardModel.from_env(
+    self._tactile_reward_model = TactileRewardModel.from_cfg(
+        self.cfg.tactile_reward,
         num_envs=self.num_envs,
         device=self.device,
         max_episode_length=self.max_episode_length,
@@ -27,12 +28,13 @@ import logging
 import os
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
 import torch
 
-__all__ = ["TactileRewardModel"]
+__all__ = ["TactileRewardCfg", "TactileRewardModel"]
 
 # Library convention: emit records, never configure handlers or levels — that is
 # the host application's job. Messages at WARNING and above still reach stderr
@@ -42,10 +44,60 @@ logger = logging.getLogger(__name__)
 
 # This module lives at <repo_root>/tactile_reward_model/, so the vendored
 # Tactile-ReWiND checkout is resolved relative to it rather than hardcoded to a
-# particular home directory. Override with FORGE_TACTILE_REWARD_ROOT.
+# particular home directory. Override with the config's `rewind_root`.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_REWIND_ROOT = str(_REPO_ROOT / "external" / "third-party" / "Tactile-ReWiND")
 _DEFAULT_INSTRUCTION = "stack an object on a box"
+
+
+@dataclass
+class TactileRewardCfg:
+    """Knobs for the dense tactile progress reward. Empty ``ckpt`` = disabled.
+
+    A plain stdlib dataclass, deliberately not an IsaacLab ``@configclass``, so
+    this package stays importable without IsaacLab. It still nests inside a
+    ``@configclass`` env config: ``configclass`` wraps it in a
+    ``default_factory`` (so instances don't share state), ``class_to_dict``
+    recurses into any object with a ``__dict__``, and ``update_class_from_dict``
+    applies overrides via ``setattr``. That makes
+    ``env.tactile_reward.scale=0.1`` work on the CLI like any other field.
+
+    Every field defaults to a value of its own declared type — never ``None``.
+    IsaacLab's ``update_class_from_dict`` type-checks an override against
+    ``type(current_value)``, so a ``None`` default makes the field reject every
+    override with "Expected: <class 'NoneType'>". Empty string / 0 are the
+    "unset" sentinels instead.
+    """
+
+    ckpt: str = ""
+    """Path to the Tactile-ReWiND ``.pth``. Empty disables the reward entirely."""
+
+    scale: float = 1.0
+    """Multiplier on the predicted progress. Reward shaping, applied by the env."""
+
+    scale_end: float = 0.0
+    """Target scale for linear annealing. Only read when ``anneal_steps > 0``."""
+
+    anneal_steps: int = 0
+    """Env control-steps to ramp ``scale`` -> ``scale_end``. 0 disables annealing."""
+
+    instruction: str = ""
+    """Task string encoded by MiniLM. Empty keeps the env's own default wording."""
+
+    history: int = 0
+    """Rolling-buffer length. 0 = the episode length."""
+
+    smooth_alpha: float = 1.0
+    """EMA coefficient on the predicted progress. 1.0 disables smoothing."""
+
+    rewind_root: str = ""
+    """Path to the Tactile-ReWiND checkout. Empty = the vendored copy."""
+
+    log_env: int = 0
+    """Index of the env whose per-episode progress curve is plotted."""
+
+    curve_log_dir: str = ""
+    """Directory for progress-curve PNGs. Empty = a timestamped default."""
 
 
 class TactileRewardModel:
@@ -162,47 +214,41 @@ class TactileRewardModel:
     # Construction
     # ------------------------------------------------------------------
     @classmethod
-    def from_env(
+    def from_cfg(
         cls,
+        cfg: TactileRewardCfg,
         num_envs: int,
         device: torch.device | str,
         max_episode_length: int = 150,
+        default_instruction: str = _DEFAULT_INSTRUCTION,
     ) -> "TactileRewardModel | None":
-        """Build from ``FORGE_TACTILE_REWARD_*`` env vars, or ``None`` if disabled.
+        """Build from a :class:`TactileRewardCfg`, or ``None`` if ``ckpt`` is empty.
 
-        Note FORGE_TACTILE_REWARD_SCALE is deliberately absent: scaling is
-        reward shaping and belongs to the caller (see the env's
-        ``compute_tactile_reward``), not to the progress predictor.
-
-        Knobs:
-            FORGE_TACTILE_REWARD_CKPT         (str path; empty = disabled)
-            FORGE_TACTILE_REWARD_INSTRUCTION  (default "stack an object on a box")
-            FORGE_TACTILE_REWARD_ROOT         (path to Tactile-ReWiND repo)
-            FORGE_TACTILE_REWARD_HISTORY      (int, default = max_episode_length)
-            FORGE_TACTILE_REWARD_SMOOTH_ALPHA (float, default 1.0 = no smoothing)
-            FORGE_TACTILE_REWARD_LOG_ENV      (int, default 0)
-            FORGE_TACTILE_REWARD_LOG_DIR      (str, default logs/tactile_curves/<ts>)
+        The shaping fields on that config (``scale``, ``scale_end``,
+        ``anneal_steps``) are deliberately ignored here: the caller applies them
+        to the progress this model returns.
         """
-        ckpt = os.getenv("FORGE_TACTILE_REWARD_CKPT", "").strip()
+        ckpt = (cfg.ckpt or "").strip()
         if not ckpt:
             return None
 
-        history = os.getenv("FORGE_TACTILE_REWARD_HISTORY", "").strip()
         default_curve_dir = os.path.expanduser(
             f"~/tactile_isaaclab/logs/tactile_curves/{int(time.time())}"
         )
+        # The config uses empty-string / 0 rather than None as its "unset"
+        # sentinels (see TactileRewardCfg), so normalize them here.
         try:
             return cls(
                 ckpt_path=ckpt,
                 num_envs=num_envs,
                 device=device,
-                instruction=os.getenv("FORGE_TACTILE_REWARD_INSTRUCTION", _DEFAULT_INSTRUCTION),
-                history_length=int(history) if history else None,
+                instruction=cfg.instruction or default_instruction,
+                history_length=int(cfg.history) or None,
                 max_episode_length=max_episode_length,
-                smooth_alpha=float(os.getenv("FORGE_TACTILE_REWARD_SMOOTH_ALPHA", "1.0")),
-                rewind_root=os.getenv("FORGE_TACTILE_REWARD_ROOT", None),
-                curve_log_dir=os.getenv("FORGE_TACTILE_REWARD_LOG_DIR", default_curve_dir),
-                log_env=int(os.getenv("FORGE_TACTILE_REWARD_LOG_ENV", "0")),
+                smooth_alpha=float(cfg.smooth_alpha),
+                rewind_root=cfg.rewind_root or None,
+                curve_log_dir=cfg.curve_log_dir or default_curve_dir,
+                log_env=int(cfg.log_env),
             )
         except ImportError as e:
             logger.warning("[TactileReward] disabled: %s", e)
@@ -289,7 +335,11 @@ class TactileRewardModel:
                 (latest[self.log_env].item(), out[self.log_env].item())
             )
 
-        return out
+        # Copy: with smoothing on, `out` IS the internal EMA buffer, and
+        # reset_idx() zeroes it in place. A caller holding the returned tensor
+        # across an episode reset would otherwise see its values change
+        # underneath it. Costs num_envs floats.
+        return out.clone()
 
     def _validate_frame(self, frame: torch.Tensor) -> None:
         """Fail fast, and in the caller's terms, on a malformed tactile frame.

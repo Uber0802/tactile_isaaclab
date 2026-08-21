@@ -76,14 +76,14 @@ for ckpt_name in "${CKPTS[@]}"; do
     mkdir -p "$save_dir"
     echo "==== [$label] ckpt=$ckpt_name → $save_dir  (max_epochs=$max_iters_abs) ===="
 
-    FORGE_FIXED_OBJECT_POS=1 \
-    FORGE_SAVE_TACTILE_FORCE_FIELD=1 \
-    FORGE_SAVE_TACTILE_ALL_ENVS=1 \
     FORGE_ENABLE_SENSOR=1 \
-    FORGE_TACTILE_SAVE_DIR="$save_dir" \
-    FORGE_TACTILE_EPISODES_PER_ENV=$EPISODES_PER_ENV \
-    FORGE_TACTILE_REWARD_INSTRUCTION="grasp the blue box and stack it on the red box" \
     ./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
+    "env.fixed_object_pos=true" \
+    "env.tactile_save.force_field=true" \
+    "env.tactile_save.all_envs=true" \
+    "env.tactile_save.save_dir=$save_dir" \
+    "env.tactile_save.episodes_per_env=$EPISODES_PER_ENV" \
+    "env.tactile_reward.instruction=grasp the blue box and stack it on the red box" \
         --task Isaac-Stack-Cube-Franka-Gelsight-v0 \
         --checkpoint "$ckpt_path" \
         --num_envs 128 \

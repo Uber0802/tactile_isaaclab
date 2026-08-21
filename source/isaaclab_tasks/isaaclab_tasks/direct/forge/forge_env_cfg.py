@@ -15,6 +15,8 @@ from isaaclab.utils import configclass
 from isaaclab_assets.sensors import GELSIGHT_R15_CFG
 from isaaclab_contrib.sensors.tacsl_sensor import VisuoTactileSensorCfg
 from isaaclab_tasks.direct.factory.factory_env_cfg import OBS_DIM_CFG, STATE_DIM_CFG, CtrlCfg, FactoryEnvCfg, ObsRandCfg
+from isaaclab_tasks.utils.runtime_cfg import TactileEncoderCfg, TactileSaveCfg, VisualRewardCfg
+from isaaclab_tasks.utils.tactile_reward_import import TactileRewardCfg
 
 from .forge_events import randomize_dead_zone
 from .forge_tasks_cfg import ForgeGearMesh, ForgeNutThread, ForgePegInsert, ForgeTask
@@ -127,6 +129,18 @@ class ForgeEnvCfg(FactoryEnvCfg):
     ctrl: ForgeCtrlCfg = ForgeCtrlCfg()
     task: ForgeTask = ForgeTask()
     events: EventCfg = EventCfg()
+
+    # Dense tactile progress reward. Empty ckpt = disabled.
+    tactile_reward: TactileRewardCfg = TactileRewardCfg()
+
+    # Dense visual progress reward (RGB -> DINOv2 -> ReWiND). Empty ckpt = disabled.
+    visual_reward: VisualRewardCfg = VisualRewardCfg()
+
+    # Per-episode trajectory dumping. force_field=False disables it.
+    tactile_save: TactileSaveCfg = TactileSaveCfg()
+
+    # Frozen tactile encoder for the embedding obs. Empty ckpt = disabled.
+    tactile_encoder: TactileEncoderCfg = TactileEncoderCfg()
 
     ft_smoothing_factor: float = 0.25
 

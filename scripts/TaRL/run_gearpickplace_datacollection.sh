@@ -33,13 +33,13 @@ for ckpt_name in "${CKPTS[@]}"; do
     echo "==== [$label] ckpt=$ckpt_name → $save_dir  (max_epochs=$max_iters_abs) ===="
 
     FORGE_SKIP_TACTILE_SENSORS=1 \
-    FORGE_SAVE_TACTILE_ALL_ENVS=1 \
-    FORGE_SAVE_CAMERA=1 \
     FORGE_ENABLE_FRONT_CAM=1 \
     FORGE_DISABLE_YAW_DIFF_OBS=1 \
-    FORGE_TACTILE_EPISODES_PER_ENV=1 \
-    FORGE_TACTILE_SAVE_DIR="$save_dir" \
     ./isaaclab.sh -p "$TRAIN" \
+    "env.tactile_save.all_envs=true" \
+    "env.tactile_save.camera=true" \
+    "env.tactile_save.episodes_per_env=1" \
+    "env.tactile_save.save_dir=$save_dir" \
         --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
         --baseline single_pos \
         --checkpoint "$ckpt_path" \

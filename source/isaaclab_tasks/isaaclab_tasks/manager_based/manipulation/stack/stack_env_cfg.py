@@ -19,6 +19,8 @@ from isaaclab.sensors.frame_transformer.frame_transformer_cfg import FrameTransf
 from isaaclab.sim.spawners.from_files.from_files_cfg import GroundPlaneCfg, UsdFileCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
+from isaaclab_tasks.utils.runtime_cfg import TactileSaveCfg
+from isaaclab_tasks.utils.tactile_reward_import import TactileRewardCfg
 
 from . import mdp
 
@@ -231,6 +233,23 @@ class StackEnvCfg(ManagerBasedRLEnvCfg):
     log_reward_shaping: bool = True
     reward_log_path: str | None = "reward_shaping.txt"
     reward_log_env_idx: int = 135
+
+    # Dense tactile progress reward. Empty ckpt = disabled.
+    tactile_reward: TactileRewardCfg = TactileRewardCfg()
+
+    # Per-episode trajectory dumping. force_field=False disables it.
+    tactile_save: TactileSaveCfg = TactileSaveCfg()
+
+    # Pin the two objects to fixed poses instead of randomizing them. Consumed
+    # in StackTactileEnv.__init__, which runs after Hydra applies overrides.
+    fixed_object_pos: bool = False
+
+    # NOTE: no tactile_encoder field here. GelsightObservationsCfg.__post_init__
+    # reads FORGE_TACTILE_ENCODER_CKPT/_DIM to decide whether the
+    # tactile_embedding obs term exists and how wide it is. That runs before
+    # Hydra applies overrides, so a config field would create the encoder while
+    # leaving the obs term absent — a silent half-migration. Stays env-var
+    # driven until the obs term is sized from the checkpoint instead.
 
     # Unused managers
     commands = None
