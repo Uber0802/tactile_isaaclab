@@ -10,6 +10,5 @@ FORGE_TACTILE_REWARD_ROOT="$TACTILE_ROOT" \
     --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
     --baseline baseline \
     --headless --num_envs 256 --max_iterations 10000 --enable_cameras --seed 2 \
-    $WANDB --wandb-name PegInsert_PickPlace_TaRL_0.1_seed2 \
     agent.params.config.full_experiment_name=PegInsert_PickPlace_TaRL_0.1_seed2 \
     agent.params.config.save_frequency=20

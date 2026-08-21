@@ -16,6 +16,5 @@ FORGE_VISUAL_REWARD_DINO_INTERVAL=1 \
     --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
     --baseline naive \
     --headless --num_envs 256 --max_iterations 10000 --enable_cameras \
-    $WANDB --wandb-name PegInsert_PickPlace_VisualReward_naive1.0 \
     agent.params.config.full_experiment_name=PegInsert_PickPlace_VisualReward_naive1.0 \
     agent.params.config.save_frequency=20

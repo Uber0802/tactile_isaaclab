@@ -19,7 +19,7 @@ import isaacsim.core.utils.torch as torch_utils
 # override with PICKPLACE_LOG if you want somewhere else.
 _PP_LOG_PATH = os.getenv(
     "PICKPLACE_LOG",
-    "/mnt/home/uber/IsaacLab/logs/pickplace_metrics.log",
+    "./logs/pickplace_metrics.log",
 )
 _PP_LOG_INTERVAL = int(os.getenv("PICKPLACE_LOG_INTERVAL", "200"))
 os.makedirs(os.path.dirname(_PP_LOG_PATH), exist_ok=True)

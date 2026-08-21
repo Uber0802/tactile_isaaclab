@@ -16,6 +16,5 @@ FORGE_TACTILE_REWARD_ROOT="$TACTILE_ROOT" \
     --task Isaac-Forge-NutThread-PickPlace-Direct-v0 \
     --baseline baseline \
     --headless --num_envs 256 --max_iterations 10000 --enable_cameras --seed 1 \
-    $WANDB --wandb-name NutThread_PickPlace_TaRL_0.175_anneal1000it_seed1 \
     agent.params.config.full_experiment_name=NutThread_PickPlace_TaRL_0.175_anneal1000it_seed1 \
     agent.params.config.save_frequency=20

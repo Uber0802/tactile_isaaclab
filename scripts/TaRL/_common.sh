@@ -16,6 +16,5 @@ export TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor"
 
 # Common paths / args reused across scripts.
 TRAIN="scripts/reinforcement_learning/rl_games/train.py"
-WANDB="--track --wandb-entity b11902127-ntu --wandb-project-name tactile-rewind"
-TACTILE_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-party/Tactile-ReWiND
-VISUAL_ROOT=/mnt/home/tactile/tactile_isaaclab/external/third-party/ReWiND
+TACTILE_ROOT=external/third-party/Tactile-ReWiND
+VISUAL_ROOT=external/third-party/ReWiND

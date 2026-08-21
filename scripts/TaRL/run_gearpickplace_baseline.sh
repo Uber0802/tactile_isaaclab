@@ -8,6 +8,5 @@ FORGE_SKIP_TACTILE_SENSORS=1 \
     --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
     --baseline baseline \
     --headless --num_envs 256 --max_iterations 10000 \
-    $WANDB --wandb-name GearMesh_PickPlace_baseline \
     agent.params.config.full_experiment_name=GearMesh_PickPlace_baseline \
     agent.params.config.save_frequency=20

@@ -8,6 +8,5 @@ FORGE_SKIP_TACTILE_SENSORS=1 \
     --task Isaac-Forge-NutThread-PickPlace-Direct-v0 \
     --baseline baseline \
     --headless --num_envs 256 --max_iterations 10000 --seed 1 \
-    $WANDB --wandb-name NutThread_PickPlace_baseline_seed1 \
     agent.params.config.full_experiment_name=NutThread_PickPlace_baseline_seed1 \
     agent.params.config.save_frequency=500

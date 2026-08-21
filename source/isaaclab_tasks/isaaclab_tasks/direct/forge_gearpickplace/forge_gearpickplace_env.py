@@ -17,7 +17,7 @@ import isaacsim.core.utils.torch as torch_utils
 # Periodic text log so we can monitor training without wandb.
 _GP_LOG_PATH = os.getenv(
     "GEARPICKPLACE_LOG",
-    "/mnt/home/tactile/tactile_isaaclab/logs/gearpickplace_metrics.log",
+    "./logs/gearpickplace_metrics.log",
 )
 _GP_LOG_INTERVAL = int(os.getenv("GEARPICKPLACE_LOG_INTERVAL", "200"))
 os.makedirs(os.path.dirname(_GP_LOG_PATH), exist_ok=True)

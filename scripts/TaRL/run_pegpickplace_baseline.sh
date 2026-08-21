@@ -7,6 +7,5 @@ source "$(dirname "$0")/_common.sh"
     --task Isaac-Forge-PegInsert-PickPlace-Direct-v0 \
     --baseline baseline \
     --headless --num_envs 128 --max_iterations 10000 --enable_cameras --seed 2 \
-    $WANDB --wandb-name PegInsert_PickPlace_baseline_seed2 \
     agent.params.config.full_experiment_name=PegInsert_PickPlace_baseline_seed2 \
     agent.params.config.save_frequency=200

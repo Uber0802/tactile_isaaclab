@@ -17,7 +17,7 @@ import isaacsim.core.utils.torch as torch_utils
 # Periodic text log so we can monitor training without wandb.
 _NP_LOG_PATH = os.getenv(
     "NUTPICKPLACE_LOG",
-    "/mnt/home/tactile/tactile_isaaclab/logs/nutpickplace_metrics.log",
+    "./logs/nutpickplace_metrics.log",
 )
 _NP_LOG_INTERVAL = int(os.getenv("NUTPICKPLACE_LOG_INTERVAL", "200"))
 os.makedirs(os.path.dirname(_NP_LOG_PATH), exist_ok=True)
