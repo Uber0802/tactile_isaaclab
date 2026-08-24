@@ -32,7 +32,7 @@ TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
 FORGE_SKIP_TACTILE_SENSORS=1 \
 FORGE_ENABLE_FRONT_CAM=1 \
-FORGE_VISUAL_REWARD_CKPT=/mnt/tank/tactile/Tactile-Reward/ckpt_visual/nut_seed2_multipos/nut_rgb_seed2_multipos_epoch19.pth \
+FORGE_VISUAL_REWARD_CKPT=/mnt/tank/tactile/Tactile-Reward/ckpt_visual/nut_seed2_multipos/nut_rgb_seed2_multipos_epoch13.pth \
 FORGE_VISUAL_REWARD_SCALE=0.175 \
 FORGE_VISUAL_REWARD_SCALE_END=0.0 \
 FORGE_VISUAL_REWARD_ANNEAL_MODE=success \
@@ -46,13 +46,13 @@ FORGE_VISUAL_REWARD_DINO_INTERVAL=1 \
     --task Isaac-Forge-NutThread-PickPlace-Direct-v0 \
     --baseline A_hard_success \
     --headless \
-    --seed 0 \
+    --seed 2 \
     --num_envs 256 \
     --max_iterations 10000 \
     --enable_cameras \
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name NutThread_PickPlace_baselineVisualReward_hard_success_0.175_-3.5_seed0 \
-    agent.params.config.full_experiment_name=NutThread_PickPlace_baselineVisualReward_hard_success_0.175_-3.5_seed0 \
-    agent.params.config.save_frequency=20
+    --wandb-name NutThread_PickPlace_baselineVisualReward_hard_success_0.175_-3.5_seed2 \
+    agent.params.config.full_experiment_name=NutThread_PickPlace_baselineVisualReward_hard_success_0.175_-3.5_seed2 \
+    agent.params.config.save_frequency=100

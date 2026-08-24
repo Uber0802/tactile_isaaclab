@@ -32,8 +32,8 @@ TRITON_CACHE_DIR="$CACHE_DIR/torch/triton" \
 TORCHINDUCTOR_CACHE_DIR="$CACHE_DIR/torch/inductor" \
 FORGE_SKIP_TACTILE_SENSORS=1 \
 FORGE_ENABLE_FRONT_CAM=1 \
-FORGE_VISUAL_REWARD_CKPT=/mnt/lab-tank/tactile/Tactile-Reward/ckpt_visual/gear_seed2_multipos/gear_rgb_seed2_multipos_epoch19.pth \
-FORGE_VISUAL_REWARD_SCALE=0.2 \
+FORGE_VISUAL_REWARD_CKPT=/mnt/lab-tank/tactile/Tactile-Reward/ckpt_visual/gear_seed2_multipos/gear_rgb_seed2_multipos_epoch13.pth \
+FORGE_VISUAL_REWARD_SCALE=0.175 \
 FORGE_VISUAL_REWARD_SCALE_END=0.0 \
 FORGE_VISUAL_REWARD_ANNEAL_MODE=success \
 FORGE_VISUAL_REWARD_ANNEAL_SUCCESS_THRESH=0.1 \
@@ -53,6 +53,6 @@ FORGE_VISUAL_REWARD_DINO_INTERVAL=1 \
     --track \
     --wandb-entity b11902127-ntu \
     --wandb-project-name tactile-rewind \
-    --wandb-name GearMesh_PickPlace_baselineVisualReward_yaw01_0.2_seed1 \
-    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineVisualReward_yaw01_0.2_seed1 \
-    agent.params.config.save_frequency=20
+    --wandb-name GearMesh_PickPlace_baselineVisualReward_yaw01_0.175_seed1 \
+    agent.params.config.full_experiment_name=GearMesh_PickPlace_baselineVisualReward_yaw01_0.175_seed1 \
+    agent.params.config.save_frequency=100
