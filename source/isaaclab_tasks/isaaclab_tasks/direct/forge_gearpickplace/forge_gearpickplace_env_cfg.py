@@ -133,9 +133,16 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         if baseline == "single_pos":
             self._apply_baseline_single_pos()
             return
+        if baseline == "tactile_state":
+            # Same reward regime as `baseline`; the only delta is the extra
+            # tactile latent in obs + state. See _apply_tactile_state_obs.
+            self._apply_baseline_baseline()
+            self._apply_tactile_state_obs()
+            return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskGearMeshPickPlaceCfg. "
-            f"Implemented: baseline (yaw_reward=0 + gear meshed ~5mm deep for "
+            f"Implemented: tactile_state (baseline shaping + frozen AE "
+            f"tactile latent in obs+state), baseline (yaw_reward=0 + gear meshed ~5mm deep for "
             f"success + fixed yaw randomization), "
             f"single_pos (baseline obs + all reset randomization zeroed)."
         )
@@ -160,11 +167,13 @@ class ForgeTaskGearMeshPickPlaceCfg(ForgeTaskGearMeshCfg):
         # Yaw shaping ablation.
         self.task.yaw_reward_scale = 0.0
         # 5 mm below target z (~10% of shaft) — first-tooth mesh.
-        self.task.success_threshold = -0.1
+        self.task.success_threshold = 0.0
         # Fixed yaw to stay in the tactile-reward-model training distribution.
         self.task.gear_table_yaw_range = 0.0
         self.task.fixed_asset_init_orn_range_deg = 0.0
         self.task.hand_init_orn_noise = [0.0, 0.0, 0.0]
+        self.task.yaw_reward_scale = 0.5
+        self.task.yaw_alignment_scale = 0.5
 
     def _apply_baseline_single_pos(self) -> None:
         """Single-position baseline: identical to A in obs/state, but zero out

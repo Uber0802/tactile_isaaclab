@@ -6,7 +6,9 @@
 set -e
 source "$(dirname "$0")/_common.sh"
 
+# Training checkpoint
 CKPTS_DIR=/mnt/home/tactile/tactile_isaaclab/logs/rl_games/ForgePickPlace/PegInsert_PickPlace_baselineA_legacy/nn
+# Directory to save
 BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/pegpickplace_paired
 BEST_EP=2700               # best peg baseline snapshot (r4tddjlv, ~86% success)
 

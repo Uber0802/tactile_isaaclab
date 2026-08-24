@@ -1,9 +1,7 @@
 #!/bin/bash
-# Nut pickplace — baseline + tactile reward shaping (TaRL).
-# Annealing: fade scale 0.175 -> 0.0 over the first 1000 PPO iters
-# (horizon_length=256 -> 1000*256=256000 env control steps), then hold at 0.
-# Bootstraps early learning with tactile, then converges on task reward alone.
-# Set ANNEAL_STEPS=0 to disable (constant scale).
+# Nut pickplace — tactile as state AND as reward: the frozen AE latent in
+# obs+state plus the TaRL progress reward on top.
+# Success-triggered annealing — see run_gearpickplace_tactile_state_TaRL.sh.
 source "$(dirname "$0")/_common.sh"
 
 ./isaaclab.sh -p "$TRAIN" \
@@ -15,8 +13,11 @@ source "$(dirname "$0")/_common.sh"
     "env.tactile_reward.anneal_steps=5120" \
     "env.tactile_reward.instruction=pick up the nut and thread it onto the bolt" \
     "env.tactile_reward.rewind_root=$TACTILE_ROOT" \
+    "env.tactile_encoder.ckpt=assets/TactileModel/nut_ae_best.pth" \
+    "env.tactile_encoder.dim=32" \
+    "env.tactile_encoder.root=$TACTILE_ROOT" \
     --task Isaac-Forge-NutThread-PickPlace-Direct-v0 \
-    --baseline baseline \
-    --headless --seed 0 --num_envs 256 --max_iterations 10000 --enable_cameras \
-    agent.params.config.full_experiment_name=NutThread_PickPlace_TaRL_0.175_anneal1000it_seed1 \
+    --baseline tactile_state \
+    --headless --seed 1 --num_envs 256 --max_iterations 10000 \
+    agent.params.config.full_experiment_name=NutThread_PickPlace_tactile_state_TaRL \
     agent.params.config.save_frequency=20

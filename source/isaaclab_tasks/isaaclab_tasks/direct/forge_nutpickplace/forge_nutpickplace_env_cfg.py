@@ -109,9 +109,16 @@ class ForgeTaskNutThreadPickPlaceCfg(ForgeTaskNutThreadCfg):
         if baseline == "single_pos":
             self._apply_baseline_single_pos()
             return
+        if baseline == "tactile_state":
+            # Same reward regime as `baseline`; the only delta is the extra
+            # tactile latent in obs + state. See _apply_tactile_state_obs.
+            self._apply_baseline_baseline()
+            self._apply_tactile_state_obs()
+            return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskNutThreadPickPlaceCfg. "
-            f"Implemented: baseline (yaw_reward=0 + wider pose noise + nut threaded "
+            f"Implemented: tactile_state (baseline shaping + frozen AE "
+            f"tactile latent in obs+state), baseline (yaw_reward=0 + wider pose noise + nut threaded "
             f"~3.5 pitches deep for success, bidirectional rotation), "
             f"single_pos (baseline obs + all reset randomization zeroed)."
         )

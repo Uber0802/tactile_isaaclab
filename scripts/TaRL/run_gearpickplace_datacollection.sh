@@ -6,7 +6,9 @@
 set -e
 source "$(dirname "$0")/_common.sh"
 
+# Training checkpoint
 CKPTS_DIR=/mnt/home/uber/tactile_isaaclab/logs/rl_games/ForgeGearPickPlace/GearMesh_PickPlace_baselineA/nn
+# Directory to save
 BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/gearpickplace_curriculum_rgb
 
 # Ep list spanning the gear baselineA skill curve (0% → ~79% at ep_740).

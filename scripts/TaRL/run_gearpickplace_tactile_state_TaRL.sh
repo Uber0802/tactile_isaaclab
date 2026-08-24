@@ -1,5 +1,6 @@
 #!/bin/bash
-# Gear pickplace — baseline + tactile reward shaping (TaRL).
+# Gear pickplace — baseline + tactile as state + tactile reward shaping.
+
 source "$(dirname "$0")/_common.sh"
 
 ./isaaclab.sh -p "$TRAIN" \
@@ -11,8 +12,11 @@ source "$(dirname "$0")/_common.sh"
     "env.tactile_reward.anneal_steps=25600" \
     "env.tactile_reward.instruction=pick up the gear and mesh it onto the shaft" \
     "env.tactile_reward.rewind_root=$TACTILE_ROOT" \
+    "env.tactile_encoder.ckpt=assets/TactileModel/gear_ae_best.pth" \
+    "env.tactile_encoder.dim=32" \
+    "env.tactile_encoder.root=$TACTILE_ROOT" \
     --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
-    --baseline baseline \
-    --headless --seed 2 --num_envs 128 --max_iterations 10000 --enable_cameras \
-    agent.params.config.full_experiment_name=GearMesh_PickPlace_TaRL \
-    agent.params.config.save_frequency=20
+    --baseline tactile_state \
+    --headless --seed 0 --num_envs 256 --max_iterations 10000 \
+    agent.params.config.full_experiment_name=GearMesh_PickPlace_tactile_state_TaRL \
+    agent.params.config.save_frequency=20 \

@@ -6,7 +6,9 @@
 set -e
 source "$(dirname "$0")/_common.sh"
 
+# Training checkpoint
 CKPTS_DIR=/mnt/home/tactile/tactile_isaaclab/logs/rl_games/ForgeNutPickPlace/NutThread_PickPlace_baselineA/nn
+# Directory to save
 BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/nutpickplace_paired
 BEST_EP=260                # best nut baseline snapshot (~57% success)
 

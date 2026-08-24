@@ -69,17 +69,13 @@ class TactileRewardCfg:
     "unset" sentinels instead.
     """
 
+    # ------------------------------------------------------------------
+    # Predictor fields — read by TactileRewardModel itself (see from_cfg).
+    # These determine WHAT progress gets predicted.
+    # ------------------------------------------------------------------
+
     ckpt: str = ""
     """Path to the Tactile-ReWiND ``.pth``. Empty disables the reward entirely."""
-
-    scale: float = 1.0
-    """Multiplier on the predicted progress. Reward shaping, applied by the env."""
-
-    scale_end: float = 0.0
-    """Target scale for linear annealing. Only read when ``anneal_steps > 0``."""
-
-    anneal_steps: int = 0
-    """Env control-steps to ramp ``scale`` -> ``scale_end``. 0 disables annealing."""
 
     instruction: str = ""
     """Task string encoded by MiniLM. Empty keeps the env's own default wording."""
@@ -98,6 +94,43 @@ class TactileRewardCfg:
 
     curve_log_dir: str = ""
     """Directory for progress-curve PNGs. Empty = a timestamped default."""
+
+    # ------------------------------------------------------------------
+    # Auxiliary fields — NOT read by this model. The env reads them and
+    # applies them in its own reward logic, so they determine HOW the
+    # predicted progress is turned into a reward term.
+    #
+    # They live here so one ``env.tactile_reward.*`` namespace covers the
+    # whole feature on the CLI, and so a different env can adopt a different
+    # shaping policy (or ignore these entirely) without the predictor
+    # changing. `ForgeEnv._init_tactile_reward` reads them;
+    # `ForgeEnv.compute_tactile_reward` runs the ramp each step.
+    # ------------------------------------------------------------------
+
+    scale: float = 1.0
+    """Multiplier on the predicted progress."""
+
+    scale_end: float = 0.0
+    """Target scale to anneal toward. Only read when ``anneal_steps > 0``."""
+
+    anneal_steps: int = 0
+    """Env control-steps to ramp ``scale`` -> ``scale_end``. 0 disables annealing.
+    One PPO iteration is ``horizon_length`` control steps (256 for these tasks),
+    so annealing over 100 iters means ``anneal_steps = 25600``."""
+
+    anneal_mode: str = "linear"
+    """When the ramp starts. ``"linear"`` counts from step 0; ``"success"`` holds
+    at ``scale`` until the running episode success rate first reaches
+    ``anneal_success_thresh``, then ramps over ``anneal_steps`` from that moment.
+    Lets the bonus keep bootstrapping until the policy starts solving the task,
+    rather than fading on a fixed clock that may expire before anything works."""
+
+    anneal_success_thresh: float = 0.01
+    """Success rate that fires the ramp in ``"success"`` mode. Ignored otherwise."""
+
+    anneal_success_ema_alpha: float = 0.1
+    """EMA coefficient on the per-reset success rate used as the trigger signal.
+    The env feeds this EMA from each reset batch's mean success."""
 
 
 class TactileRewardModel:
@@ -224,9 +257,8 @@ class TactileRewardModel:
     ) -> "TactileRewardModel | None":
         """Build from a :class:`TactileRewardCfg`, or ``None`` if ``ckpt`` is empty.
 
-        The shaping fields on that config (``scale``, ``scale_end``,
-        ``anneal_steps``) are deliberately ignored here: the caller applies them
-        to the progress this model returns.
+        Reads only the predictor fields; the auxiliary shaping group is left to
+        the caller (both are marked as such on :class:`TactileRewardCfg`).
         """
         ckpt = (cfg.ckpt or "").strip()
         if not ckpt:

@@ -149,6 +149,60 @@ class ForgeEnvCfg(FactoryEnvCfg):
     # sensors — works alongside or without them. Requires --enable_cameras flag.
     enable_front_cam: bool = os.environ.get("FORGE_ENABLE_FRONT_CAM", "0") == "1"
 
+    def _apply_tactile_state_obs(self) -> None:
+        """Append the frozen tactile latent to BOTH actor obs and critic state.
+
+        Shared by every task's ``tactile_state`` baseline. Pairs with the task's
+        own ``baseline`` reward shaping, so the ONLY delta against
+        ``--baseline baseline`` is the extra input modality — which is what makes
+        it a clean "tactile as state" ablation against "tactile as reward"
+        (TacReward). The latent comes from an autoencoder-pretrained
+        ``TactileCNNEncoder`` (see
+        ``external/third-party/Tactile-ReWiND/train_tactile_ae.py``); trained for
+        reconstruction only, it carries no task/reward information, unlike
+        baseline B2's progress-trained encoder.
+
+        The obs/state vectors are sized here, before the checkpoint is read, so
+        ``tactile_encoder.dim`` must be declared and must equal the ckpt's
+        ``2 * per_hand_dim`` — ``ForgeEnv._init_tactile_encoder`` asserts that at
+        startup rather than letting a wrong width reach the policy.
+
+        GelSight RGB is not consumed, so the tactile cameras are switched off:
+        force-field / SDF sensing needs no RTX renderer, which keeps the run on
+        compute-only cloud GPUs (no ``--enable_cameras``).
+        """
+        # Fail fast on incompatible combos — clearer than the KeyError or shape
+        # error they would otherwise cause deep inside obs assembly. Test the
+        # sensors themselves rather than the flag that drops them: __post_init__
+        # has already run, so this catches every reason they are absent.
+        if self.left_tactile_sensor is None or self.right_tactile_sensor is None:
+            raise RuntimeError(
+                "baseline tactile_state reads the GelSight force fields, but the "
+                "tactile sensors were dropped from the scene (see "
+                "FORGE_SKIP_TACTILE_SENSORS in __post_init__)."
+            )
+        if not (self.tactile_encoder.ckpt or "").strip():
+            raise RuntimeError(
+                "baseline tactile_state requires env.tactile_encoder.ckpt "
+                "(autoencoder ckpt from train_tactile_ae.py)."
+            )
+        embed_dim = int(self.tactile_encoder.dim)
+        if embed_dim <= 0:
+            raise RuntimeError(
+                "baseline tactile_state requires env.tactile_encoder.dim "
+                "(= 2 * per_hand_dim of the ckpt) so the obs vector can be sized "
+                "before the ckpt is loaded."
+            )
+
+        OBS_DIM_CFG.update({"tactile_embedding": embed_dim})
+        STATE_DIM_CFG.update({"tactile_embedding": embed_dim})
+        self.obs_order = list(self.obs_order) + ["tactile_embedding"]
+        self.state_order = list(self.state_order) + ["tactile_embedding"]
+
+        # Force-field only: drop the tactile RGB camera pipeline for speedup.
+        self.left_tactile_sensor.enable_camera_tactile = False
+        self.right_tactile_sensor.enable_camera_tactile = False
+
     def _attach_front_cam_if_enabled(self) -> None:
         """Attach a 3rd-person RGB camera to self.scene when enabled.
 

@@ -13,9 +13,4 @@ ISAACLAB_LOG_DIR=/mnt/scratch/kimnai/research/tarl/logs \
     --max_iterations 20000 \
     --enable_cameras \
     --headless \
-    --track \
-    --seed 42 \
-    --checkpoint /mnt/home/kimnai/research/tactile_isaaclab/last_franka_stack_potted_meat_can_ep_13300_rew_83.377144.pth \
-    --wandb-entity b06902045-national-taiwan-university \
-    --wandb-project-name tactile-rewind \
-    --wandb-name Stack_meat_can_tacReward_v3_03_annealing_continue_2
+    --seed 42

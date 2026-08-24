@@ -239,12 +239,26 @@ class ForgeEnv(FactoryEnv):
             else self._tactile_reward_scale
         )
         self._tactile_anneal_step = 0
+        # "linear" ramps from step 0; "success" holds the start scale until the
+        # running success rate first crosses the threshold, then ramps from
+        # there. The latter keeps the bonus bootstrapping until the policy is
+        # just starting to solve the task, instead of fading on a fixed clock
+        # that may expire before anything works.
+        self._tactile_anneal_mode = (rew_cfg.anneal_mode or "linear").strip().lower()
+        self._tactile_anneal_success_thresh = float(rew_cfg.anneal_success_thresh)
+        self._tactile_anneal_success_ema_alpha = float(rew_cfg.anneal_success_ema_alpha)
+        self._tactile_anneal_success_ema = 0.0
+        self._tactile_anneal_triggered = False
         self._tactile_reward_enabled = True
 
         if self._tactile_reward_anneal_steps > 0:
-            anneal_msg = (f"  ANNEAL {self._tactile_reward_scale_start}->"
+            anneal_msg = (f"  ANNEAL[{self._tactile_anneal_mode}] "
+                          f"{self._tactile_reward_scale_start}->"
                           f"{self._tactile_reward_scale_end} over "
                           f"{self._tactile_reward_anneal_steps} steps")
+            if self._tactile_anneal_mode == "success":
+                anneal_msg += (f" (trigger@success>="
+                               f"{self._tactile_anneal_success_thresh})")
         else:
             anneal_msg = ""
         print(f"[TactileReward] scale={self._tactile_reward_scale}{anneal_msg}")
@@ -472,26 +486,76 @@ class ForgeEnv(FactoryEnv):
 
         out = self._tactile_reward_model.compute(frame)          # (B,) in [0, 1]
 
-        # Linear anneal of the scale (no-op when anneal_steps <= 0 or end == start).
+        # Anneal the scale (no-op when anneal_steps <= 0 or end == start).
         if self._tactile_reward_anneal_steps > 0:
-            frac = min(1.0, self._tactile_anneal_step / self._tactile_reward_anneal_steps)
-            self._tactile_reward_scale = (
-                self._tactile_reward_scale_start
-                + (self._tactile_reward_scale_end - self._tactile_reward_scale_start) * frac
-            )
-            self._tactile_anneal_step += 1
+            # In "success" mode the ramp is frozen until the running success rate
+            # crosses the trigger; once tripped it behaves like the linear ramp,
+            # counting from the moment it fired.
+            ramping = True
+            if self._tactile_anneal_mode == "success" and not self._tactile_anneal_triggered:
+                if self._tactile_anneal_success_ema >= self._tactile_anneal_success_thresh:
+                    self._tactile_anneal_triggered = True
+                    print(f"[TactileReward] success anneal TRIGGERED "
+                          f"(success_ema={self._tactile_anneal_success_ema:.4f} >= "
+                          f"{self._tactile_anneal_success_thresh}); decaying "
+                          f"{self._tactile_reward_scale_start}->"
+                          f"{self._tactile_reward_scale_end} over "
+                          f"{self._tactile_reward_anneal_steps} steps")
+                else:
+                    ramping = False
+            if ramping:
+                frac = min(1.0, self._tactile_anneal_step / self._tactile_reward_anneal_steps)
+                self._tactile_reward_scale = (
+                    self._tactile_reward_scale_start
+                    + (self._tactile_reward_scale_end - self._tactile_reward_scale_start) * frac
+                )
+                self._tactile_anneal_step += 1
         return out * self._tactile_reward_scale
 
+    @staticmethod
+    def _encoder_rewind_root(configured: str = "") -> str:
+        """Directory holding ``tools/tactile_model.py``.
+
+        The configured path wins, but the repo-relative fallback is correct by
+        construction — the historical default (``~/tactile_isaaclab/...``)
+        silently misses on checkouts that live anywhere else.
+        """
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), *[".."] * 5))
+        candidates = [
+            (configured or "").strip(),
+            os.path.join(repo_root, "external", "third-party", "Tactile-ReWiND"),
+        ]
+        for cand in candidates:
+            if cand and os.path.isfile(
+                os.path.join(os.path.expanduser(cand), "tools", "tactile_model.py")
+            ):
+                return os.path.expanduser(cand)
+        return os.path.expanduser(candidates[-1])
+
     def _init_tactile_encoder(self):
-        """Optional 768-dim tactile embedding for Baseline B2.
+        """Optional frozen tactile embedding appended to the obs/state vectors.
 
         Configured through ``cfg.tactile_encoder`` (a ``TactileEncoderCfg``)::
 
-            env.tactile_encoder.ckpt=/path/to/model.pth
+            env.tactile_encoder.ckpt=/path/to/model.pth env.tactile_encoder.dim=32
 
-        Loads only the `TactileCNNEncoder` submodule (encoder.*) from the same
-        ckpt format used by `_init_tactile_reward`, freezes it, and runs it
-        once per env-step on the current (B, 2, 40, 25) shear-only frame.
+        Loads only the ``TactileCNNEncoder`` submodule (``encoder.*``), freezes
+        it, and runs it once per env-step on the current force-field frame. Two
+        ckpt families are supported, distinguished by the ``args`` they carry:
+
+          * ReWiND progress ckpts (baseline B2): no ``in_channels`` recorded, so
+            the default reproduces the original behavior — shear-only
+            ``(B, 2, 40, 25)`` at raw scale.
+          * AE ckpts from ``train_tactile_ae.py`` (baseline ``tactile_state``):
+            record ``in_channels`` and ``global_scale``. A 3-channel ckpt
+            consumes ``(normal, shear_x, shear_y)`` in the same layout the AE was
+            trained on, divided by the ckpt's fixed dataset-wide scale.
+
+        The AE latent is trained for reconstruction only, so unlike B2's
+        progress-trained encoder it carries no task/reward information — which is
+        what makes it a clean "tactile as state" ablation against "tactile as
+        reward" (TacReward).
+
         An empty ``ckpt`` disables it.
         """
         self._tactile_encoder_enabled = False
@@ -500,9 +564,7 @@ class ForgeEnv(FactoryEnv):
         if not ckpt:
             return
 
-        rewind_root = os.path.expanduser(
-            enc_cfg.root or "~/tactile_isaaclab/external/third-party/Tactile-ReWiND"
-        )
+        rewind_root = self._encoder_rewind_root(enc_cfg.root)
         if rewind_root not in sys.path:
             sys.path.insert(0, rewind_root)
         try:
@@ -517,9 +579,25 @@ class ForgeEnv(FactoryEnv):
         bimanual_axis = cfg.get("bimanual_axis", None) or "height"
         per_hand_dim = cfg.get("per_hand_dim", 384)
         output_dim = 2 * per_hand_dim   # matches TactileReWiNDTransformer.video_dim
+        # AE ckpts record these; ReWiND reward ckpts predate them, and the
+        # defaults reproduce the original B2 behavior (shear-only, raw scale).
+        in_channels = int(cfg.get("in_channels", None) or 2)
+        global_scale = float(cfg.get("global_scale", 0.0) or 0.0)
+
+        # The env cfg sized the obs/state vectors from ``dim`` before this ckpt
+        # was read; a mismatch would hand the policy a column of the wrong width
+        # for the entire run. Fail here rather than deep inside obs assembly.
+        declared = int(enc_cfg.dim)
+        if declared and declared != output_dim:
+            raise ValueError(
+                f"[TactileEncoder] env.tactile_encoder.dim={declared} but {ckpt} has "
+                f"per_hand_dim={per_hand_dim} (latent dim {output_dim}). Set "
+                f"env.tactile_encoder.dim={output_dim}, or retrain the AE with "
+                f"--per_hand_dim {declared // 2}."
+            )
 
         encoder = TactileCNNEncoder(
-            in_channels=2,                 # shear-only (Fx, Fy)
+            in_channels=in_channels,       # 2 = shear-only (B2), 3 = normal+shear (AE)
             per_hand_dim=per_hand_dim,
             output_dim=output_dim,
             num_strided_layers=num_strided,
@@ -541,15 +619,27 @@ class ForgeEnv(FactoryEnv):
 
         self._tactile_encoder = encoder
         self._tactile_encoder_dim = output_dim
+        self._tactile_encoder_in_channels = in_channels
+        # Same fixed dataset-wide scale the AE was trained with. Per-frame
+        # normalization here would destroy the grip-strength information the
+        # latent encodes, so this is a constant divisor, not a running max.
+        self._tactile_encoder_scale = global_scale if global_scale > 0 else None
         self._tactile_encoder_enabled = True
         print(f"[TactileEncoder] enabled  ckpt={ckpt}  out_dim={output_dim}  "
+              f"in_ch={in_channels}  global_scale={self._tactile_encoder_scale}  "
               f"axis={bimanual_axis}  strided={num_strided}")
 
     def _compute_tactile_embedding(self) -> torch.Tensor:
-        """(num_envs, 768) per-step embedding of the current shear frame.
+        """(num_envs, D) per-step embedding of the current force-field frame.
 
-        Mirrors the layout used at ReWiND training: shear-only, bimanual stacked
-        on the H axis -> (B, 2, 40, 25), then passed through the frozen CNN.
+        Both hands stacked on the row axis, then passed through the frozen CNN:
+
+          * 2-channel ckpts (B2 / ReWiND): shear-only -> ``(B, 2, 40, 25)`` at
+            raw scale, mirroring the ReWiND training layout.
+          * 3-channel AE ckpts: ``(normal, shear_x, shear_y)`` ->
+            ``(B, 3, 40, 25)``, matching the layout ``train_tactile_ae.py`` was
+            trained on, divided by the ckpt's fixed ``global_scale``.
+
         Returns zeros if the encoder is not enabled (so callers can populate
         the obs dict unconditionally).
         """
@@ -564,10 +654,20 @@ class ForgeEnv(FactoryEnv):
         nrows, ncols = left.cfg.tactile_array_size           # (20, 25)
         l_shear = left.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
         r_shear = right.data.tactile_shear_force.view(self.num_envs, nrows, ncols, 2)
-        # (B, 40, 25, 2) -> (B, 2, 40, 25) for the CNN.
-        frame = torch.cat([l_shear, r_shear], dim=1).float().permute(0, 3, 1, 2).contiguous()
+        if getattr(self, "_tactile_encoder_in_channels", 2) == 3:
+            l_normal = left.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+            r_normal = right.data.tactile_normal_force.view(self.num_envs, nrows, ncols, 1)
+            l_frame = torch.cat([l_normal, l_shear], dim=-1)     # (B, 20, 25, 3)
+            r_frame = torch.cat([r_normal, r_shear], dim=-1)
+        else:
+            l_frame, r_frame = l_shear, r_shear
+        # (B, 40, 25, C) -> (B, C, 40, 25) for the CNN.
+        frame = torch.cat([l_frame, r_frame], dim=1).float().permute(0, 3, 1, 2).contiguous()
+        scale = getattr(self, "_tactile_encoder_scale", None)
+        if scale:
+            frame = frame / scale
         with torch.no_grad():
-            return self._tactile_encoder(frame)              # (B, 768)
+            return self._tactile_encoder(frame)              # (B, D)
 
     def _get_tactile_force_tensors(self, sensor_name: str):
         """Return flattened normal/shear tactile force tensors for a registered sensor."""
@@ -1209,6 +1309,16 @@ class ForgeEnv(FactoryEnv):
             # Record each resetting env's success result and advance its episode counter.
             self.pending_episode_successes[reset_env_ids] = self.ep_succeeded[reset_env_ids].long()
             self.env_episode_index[reset_env_ids] += 1
+
+            # Feed the success-triggered tactile annealer a running estimate of
+            # the episode success rate (EMA over each reset batch's mean). Read
+            # every step by the ramp, so it cannot wait for the all-envs log below.
+            if getattr(self, "_tactile_reward_enabled", False):
+                batch_rate = self.ep_succeeded[reset_env_ids].float().mean().item()
+                a = self._tactile_anneal_success_ema_alpha
+                self._tactile_anneal_success_ema = (
+                    a * batch_rate + (1.0 - a) * self._tactile_anneal_success_ema
+                )
 
             # Only log once every env has reported for this episode.
             if (self.pending_episode_successes >= 0).all():

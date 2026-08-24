@@ -99,9 +99,16 @@ class ForgeTaskPegInsertPickPlaceCfg(ForgeTaskPegInsertCfg):
         if baseline == "single_pos":
             self._apply_baseline_single_pos()
             return
+        if baseline == "tactile_state":
+            # Same reward regime as `baseline`; the only delta is the extra
+            # tactile latent in obs + state. See _apply_tactile_state_obs.
+            self._apply_baseline_baseline()
+            self._apply_tactile_state_obs()
+            return
         raise ValueError(
             f"Unknown baseline {baseline!r} for ForgeTaskPegInsertPickPlaceCfg. "
-            f"Implemented: baseline (half transport bridges + tight 1cm descent gate), "
+            f"Implemented: tactile_state (baseline shaping + frozen AE "
+            f"tactile latent in obs+state), baseline (half transport bridges + tight 1cm descent gate), "
             f"naive (all peg-specific dense shaping off — sparse curr_success only), "
             f"single_pos (baseline obs + all reset randomization zeroed, "
             f"source hole at +10cm X from destination)."
