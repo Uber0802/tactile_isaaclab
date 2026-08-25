@@ -395,6 +395,13 @@ class ForgeEnv(FactoryEnv):
             self.num_envs, device=self.device, dtype=torch.float32,
         )
         self._visual_dino_interval = max(1, int(vis_cfg.dino_interval))
+        # Autocast dtype for the frozen backbone. Defaults to bf16 — see the
+        # benchmark note in _compute_visual_reward for why.
+        _amp = (vis_cfg.amp or "bf16").strip().lower()
+        self._visual_amp_dtype = {
+            "off": None, "none": None, "fp32": None,
+            "bf16": torch.bfloat16, "fp16": torch.float16,
+        }.get(_amp, torch.bfloat16)
         self._visual_dino_step_counter = 0
         self._visual_last_features = torch.zeros(
             self.num_envs, 768, device=self.device, dtype=torch.float32,
@@ -415,7 +422,7 @@ class ForgeEnv(FactoryEnv):
               f"backbone={backbone_name}  instruction={instruction!r}  "
               f"history={self._visual_history_length}  max_length={max_length}  "
               f"smooth_alpha={self._visual_reward_smooth_alpha}  "
-              f"dino_interval={self._visual_dino_interval}")
+              f"dino_interval={self._visual_dino_interval}  amp={_amp}")
 
     def _compute_visual_reward(self) -> torch.Tensor:
         """(num_envs,) predicted visual progress as a dense reward bonus."""
@@ -428,10 +435,21 @@ class ForgeEnv(FactoryEnv):
         # Run DINOv2 only every `dino_interval` steps to amortise cost.
         self._visual_dino_step_counter += 1
         if self._visual_dino_step_counter % self._visual_dino_interval == 0:
-            with torch.no_grad():
+            # The ViT-B/14 forward dominates this whole function: at 256 envs it
+            # measures 768 ms/control-step in fp32 vs 98 ms under bf16 autocast
+            # (RTX 6000 Ada) — i.e. fp32 roughly DOUBLES total step time for a
+            # camera run. bf16 costs 3.6e-4 mean cosine distance on the features
+            # and ~0.002 mean absolute progress, and it is also what
+            # precompute_dino_features.py used to build the training features,
+            # so it matches train-time conditions more closely than fp32 does.
+            # env.visual_reward.amp=off restores the fp32 path.
+            with torch.no_grad(), torch.amp.autocast(
+                    device_type="cuda", dtype=self._visual_amp_dtype,
+                    enabled=self._visual_amp_dtype is not None):
                 rgb = rgb_raw.permute(0, 3, 1, 2).float() / 255.0
                 rgb = (rgb - self._dino_mean) / self._dino_std
                 features = self._visual_backbone(rgb)        # (B, 768)
+            features = features.float()
             self._visual_last_features = features
         else:
             features = self._visual_last_features

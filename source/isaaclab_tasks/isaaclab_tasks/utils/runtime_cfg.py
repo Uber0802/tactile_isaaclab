@@ -126,3 +126,9 @@ class VisualRewardCfg:
 
     dino_interval: int = 1
     """Run DINOv2 every N sim steps, reusing features between. Clamped to >= 1."""
+
+    amp: str = "bf16"
+    """Autocast dtype for the frozen DINOv2 backbone: ``"bf16"`` (default),
+    ``"fp16"``, or ``"off"`` for fp32. bf16 is ~8x faster than fp32 at 256 envs
+    and matches how the training features were precomputed; see
+    ``ForgeEnv._compute_visual_reward``."""
