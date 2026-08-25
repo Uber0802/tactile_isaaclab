@@ -88,6 +88,27 @@ class VisualRewardCfg:
     scale: float = 1.0
     """Multiplier on the predicted progress."""
 
+    # -- auxiliary shaping group: read by ForgeEnv, not by the visual model.
+    # Mirrors TactileRewardCfg's group so both heads anneal with the same knobs;
+    # each head keeps independent trigger/ramp state at runtime.
+
+    scale_end: float = 0.0
+    """Target scale to anneal toward. Only read when ``anneal_steps > 0``."""
+
+    anneal_steps: int = 0
+    """Env control-steps to ramp ``scale`` -> ``scale_end``. 0 disables annealing."""
+
+    anneal_mode: str = "linear"
+    """``"linear"`` ramps from step 0; ``"success"`` holds ``scale`` until the
+    running episode success rate first reaches ``anneal_success_thresh``, then
+    ramps over ``anneal_steps`` from that moment."""
+
+    anneal_success_thresh: float = 0.01
+    """Success rate that fires the ramp in ``"success"`` mode. Ignored otherwise."""
+
+    anneal_success_ema_alpha: float = 0.1
+    """EMA coefficient on the per-reset success rate used as the trigger signal."""
+
     smooth_alpha: float = 1.0
     """EMA coefficient on the predicted progress. 1.0 disables smoothing."""
 

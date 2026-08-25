@@ -376,6 +376,20 @@ class ForgeEnv(FactoryEnv):
             self.num_envs, device=self.device, dtype=torch.long,
         )
         self._visual_reward_scale = float(vis_cfg.scale)
+        # Annealing state, mirroring _init_tactile_reward's block; each head
+        # keeps its own trigger/ramp state so both can anneal in the same run.
+        self._visual_reward_scale_start = self._visual_reward_scale
+        self._visual_reward_anneal_steps = int(vis_cfg.anneal_steps)
+        self._visual_reward_scale_end = (
+            float(vis_cfg.scale_end) if self._visual_reward_anneal_steps > 0
+            else self._visual_reward_scale
+        )
+        self._visual_anneal_step = 0
+        self._visual_anneal_mode = (vis_cfg.anneal_mode or "linear").strip().lower()
+        self._visual_anneal_success_thresh = float(vis_cfg.anneal_success_thresh)
+        self._visual_anneal_success_ema_alpha = float(vis_cfg.anneal_success_ema_alpha)
+        self._visual_anneal_success_ema = 0.0
+        self._visual_anneal_triggered = False
         self._visual_reward_smooth_alpha = float(vis_cfg.smooth_alpha)
         self._visual_smoothed_progress = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.float32,
@@ -387,7 +401,17 @@ class ForgeEnv(FactoryEnv):
         )
 
         self._visual_reward_enabled = True
-        print(f"[VisualReward] enabled  ckpt={ckpt}  scale={self._visual_reward_scale}  "
+        if self._visual_reward_anneal_steps > 0:
+            anneal_msg = (f"  ANNEAL[{self._visual_anneal_mode}] "
+                          f"{self._visual_reward_scale_start}->"
+                          f"{self._visual_reward_scale_end} over "
+                          f"{self._visual_reward_anneal_steps} steps")
+            if self._visual_anneal_mode == "success":
+                anneal_msg += (f" (trigger@success>="
+                               f"{self._visual_anneal_success_thresh})")
+        else:
+            anneal_msg = ""
+        print(f"[VisualReward] enabled  ckpt={ckpt}  scale={self._visual_reward_scale}{anneal_msg}  "
               f"backbone={backbone_name}  instruction={instruction!r}  "
               f"history={self._visual_history_length}  max_length={max_length}  "
               f"smooth_alpha={self._visual_reward_smooth_alpha}  "
@@ -457,6 +481,29 @@ class ForgeEnv(FactoryEnv):
         else:
             self._visual_smoothed_progress = latest
             out = latest
+
+        # Anneal the scale (no-op when anneal_steps <= 0 or end == start).
+        # Same schedule as compute_tactile_reward's block, on independent state.
+        if self._visual_reward_anneal_steps > 0:
+            ramping = True
+            if self._visual_anneal_mode == "success" and not self._visual_anneal_triggered:
+                if self._visual_anneal_success_ema >= self._visual_anneal_success_thresh:
+                    self._visual_anneal_triggered = True
+                    print(f"[VisualReward] success anneal TRIGGERED "
+                          f"(success_ema={self._visual_anneal_success_ema:.4f} >= "
+                          f"{self._visual_anneal_success_thresh}); decaying "
+                          f"{self._visual_reward_scale_start}->"
+                          f"{self._visual_reward_scale_end} over "
+                          f"{self._visual_reward_anneal_steps} steps")
+                else:
+                    ramping = False
+            if ramping:
+                frac = min(1.0, self._visual_anneal_step / self._visual_reward_anneal_steps)
+                self._visual_reward_scale = (
+                    self._visual_reward_scale_start
+                    + (self._visual_reward_scale_end - self._visual_reward_scale_start) * frac
+                )
+                self._visual_anneal_step += 1
         return out * self._visual_reward_scale
 
     def _compute_tactile_reward(self) -> torch.Tensor:
@@ -1318,6 +1365,15 @@ class ForgeEnv(FactoryEnv):
                 a = self._tactile_anneal_success_ema_alpha
                 self._tactile_anneal_success_ema = (
                     a * batch_rate + (1.0 - a) * self._tactile_anneal_success_ema
+                )
+
+            # Same feed for the visual head's annealer (independent EMA state,
+            # so both reward heads can anneal in the same run).
+            if getattr(self, "_visual_reward_enabled", False):
+                batch_rate = self.ep_succeeded[reset_env_ids].float().mean().item()
+                a = self._visual_anneal_success_ema_alpha
+                self._visual_anneal_success_ema = (
+                    a * batch_rate + (1.0 - a) * self._visual_anneal_success_ema
                 )
 
             # Only log once every env has reported for this episode.
