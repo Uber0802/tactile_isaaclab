@@ -1,3 +1,156 @@
+# tactile_isaaclab — Tactile Reward Learning (TaRL)
+
+A research fork of Isaac Lab for **learning manipulation from tactile reward**. A
+[Tactile-ReWiND](external/third-party/Tactile-ReWiND) transformer reads GelSight
+force fields and predicts task progress in `[0, 1]`, which is fed to the policy as
+a dense shaping reward alongside the task reward.
+
+The upstream Isaac Lab README follows below — installation, Isaac Sim version
+requirements, and `./isaaclab.sh` usage are unchanged.
+
+## Setup
+
+Snapshot of the [Isaac Lab quickstart](https://isaac-sim.github.io/IsaacLab/main/source/setup/quickstart.html),
+pinned to the versions this fork runs on:
+
+```bash
+# create a virtual environment named env_isaaclab with python3.11 and pip
+conda create -n env_isaaclab python=3.11
+conda activate env_isaaclab
+
+pip install --upgrade pip
+pip install -U torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128
+pip install "isaacsim[all,extscache]==5.1.0" --extra-index-url https://pypi.nvidia.com
+
+./isaaclab.sh --install
+```
+## Tasks
+
+| Family | Task id | Scripts |
+|---|---|---|
+| Peg insert | `Isaac-Forge-PegInsert-PickPlace-Direct-v0` | `scripts/TaRL/run_pegpickplace_*.sh` |
+| Nut thread | `Isaac-Forge-NutThread-PickPlace-Direct-v0` | `scripts/TaRL/run_nutpickplace_*.sh` |
+| Gear mesh | `Isaac-Forge-GearMesh-PickPlace-Direct-v0` | `scripts/TaRL/run_gearpickplace_*.sh` |
+| Stack cube | `Isaac-Stack-Cube-Franka-Gelsight-v0` | `scripts/TaRL/run_stack_box*.sh` |
+| Stack meat can | `Isaac-Stack-Potted-Meat-Can-Franka-Gelsight-v0` | `scripts/TaRL/run_stack_meat_can*.sh` |
+
+The forge tasks are direct-workflow envs; the stack tasks are manager-based.
+
+## Running
+
+```bash
+bash scripts/TaRL/run_gearpickplace_TaRL.sh
+```
+
+Each task has the same variants, distinguished by suffix:
+
+| Suffix | Reward / observation |
+|---|---|
+| `_baseline` | task reward only |
+| `_TaRL` | task reward + tactile progress reward |
+| `_baseline_visual` | task reward + visual (DINOv2 → ReWiND) progress reward |
+| `_TaRL_visual` | both tactile and visual progress rewards |
+| `_tactile_state` | frozen tactile encoder embedding as a policy observation |
+| `_tactile_state_TaRL` | encoder observation + tactile reward |
+| `_datacollection` | no training reward; dumps tactile/camera trajectories |
+
+### Full cycle
+
+The reward model is trained on trajectories that a baseline policy collects, so
+the loop bootstraps itself:
+
+**1. Train a baseline.** Run the `_baseline` variant to produce policy
+checkpoints spanning a range of skill levels.
+
+**2. Collect tactile trajectories.** Run `_datacollection`, loading those
+checkpoints, to sample tactile data at each skill level. Every episode is written
+as one `.npy` holding `{"Task", "Tactile", "Success"}` under
+`env.tactile_save.save_dir`.
+
+**3. Train the reward model** on the collected trajectories:
+
+```bash
+python external/third-party/Tactile-ReWiND/scripts/train_taRL.py \
+  --from_scratch \
+  --data_dirs tactile_dataset/gearpickplace_tactile \
+  --ckpt_dir tactile_dataset/gearpickplace_curriculum \
+  --run_name gearpickplace_curriculum \
+  --task_texts \
+    "pick up the gear and mesh it onto the shaft" \
+    "grasp the gear and slide it onto the shaft" \
+    "lift the gear and fit it onto the shaft" \
+    "place the gear onto the shaft" \
+    "use the gripper to pick up the gear and mesh it with the shaft" \
+  --in_channels 3 \
+  --hidden_dim 512 --num_heads 8 --num_layers 4 \
+  --per_hand_dim 384 --num_strided_layers 3 \
+  --epochs 30 --batch_size 64 --steps_per_epoch 100 \
+  --num_workers 4 --prefetch_factor 4 \
+  --lr 1e-4 --min_lr 1e-7 \
+  --rewind_ratio 0.5 --success_prob 0.5 --zero_contact_prob 0.15 \
+  --max_length 16 --normalize global \
+  --max_episodes 10000 --test_ratio 0.1 --test_eval_every 1 \
+  --amp bf16 --seed 42
+```
+
+Writes one checkpoint per epoch as `{ckpt_dir}/{run_name}_epoch{N}.pth`. Pass
+several paraphrases to `--task_texts`: the model is text-conditioned, and
+training on paraphrases keeps it from overfitting to one exact wording. Drop
+`--from_scratch` and pass `--pretrained <ckpt>` to fine-tune instead.
+
+**4. Train with the tactile reward.** Run `_TaRL`, pointing
+`env.tactile_reward.ckpt` at the checkpoint from step 3 and
+`env.tactile_reward.instruction` at one of the `--task_texts` used to train it.
+
+The architecture flags above (`--in_channels`, `--hidden_dim`, `--num_heads`,
+`--num_layers`, `--per_hand_dim`, `--num_strided_layers`, `--max_length`,
+`--normalize`) are saved into the checkpoint under `"args"` and read back when
+the reward model loads it. That is why `env.tactile_reward.*` has no fields for
+them: a checkpoint always runs with the geometry and normalization it was
+trained under, and you never restate them at run time.
+
+## Configuration
+
+The tactile/visual features are configured through the env config, so they go
+through Hydra like any other field, are rejected on typos, and are recorded in
+each run's `logs/.../params/env.yaml`:
+
+```bash
+./isaaclab.sh -p scripts/reinforcement_learning/rl_games/train.py \
+    --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
+    "env.tactile_reward.ckpt=assets/TactileModel/gear_seed2_scratch_epoch29.pth" \
+    "env.tactile_reward.scale=0.2" \
+    "env.tactile_reward.smooth_alpha=0.2"
+```
+
+Four config groups: `env.tactile_reward.*`, `env.visual_reward.*`,
+`env.tactile_encoder.*`, `env.tactile_save.*`. An empty `ckpt` disables its
+feature. Flags that decide scene construction (`FORGE_ENABLE_FRONT_CAM`,
+`FORGE_SKIP_TACTILE_SENSORS`, `FORGE_ENABLE_SENSOR`, `FORGE_DISABLE_YAW_DIFF_OBS`)
+remain environment variables — they are read in the config's `__post_init__`,
+before Hydra applies overrides.
+
+## Layout
+
+| Path | Contents |
+|---|---|
+| [`tactile_reward_model/`](tactile_reward_model/) | the progress-reward model and its config — see [its README](tactile_reward_model/README.md) |
+| `scripts/TaRL/` | one runnable script per task × variant |
+| `external/third-party/Tactile-ReWiND/` | vendored reward-model architecture and training code |
+| `source/isaaclab_tasks/.../direct/forge*/` | forge pick-place envs |
+| `source/isaaclab_tasks/.../manager_based/manipulation/stack/` | stack envs |
+
+## Model weights are not in git
+
+`assets/` and `*.pth` are gitignored. Checkpoints live outside version control
+and are referenced by path from the config — put them in `assets/TactileModel/`
+and pass `env.tactile_reward.ckpt=assets/TactileModel/<name>.pth`, or point at a
+shared filesystem path. **Do not commit `.pth` files**: GitHub hard-rejects any
+blob over 100 MB, and a checkpoint that lands in history has to be removed by
+rewriting it.
+
+---
+
 ![Isaac Lab](docs/source/_static/isaaclab.jpg)
 
 ---

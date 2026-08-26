@@ -20,7 +20,7 @@ tactile_reward_model/
 ```python
 from tactile_reward_model import TactileRewardCfg, TactileRewardModel
 
-cfg = TactileRewardCfg(ckpt="assets/TactileModel/gear_scratch_epoch18.pth",
+cfg = TactileRewardCfg(ckpt="assets/TactileModel/gear_seed2_scratch_epoch29.pth",
                        instruction="pick up the gear and mesh it onto the shaft",
                        smooth_alpha=0.2)
 
@@ -30,6 +30,85 @@ if model is not None:                      # None when cfg.ckpt is empty
     progress = model.compute(frame)        # (num_envs,) in [0, 1]
     model.reset_idx(env_ids)               # on episode reset
 ```
+
+## Wiring it into an environment
+
+Three hooks. Sketch of what `ForgeEnv` / `StackTactileEnv` actually do:
+
+```python
+class MyTactileEnv(SomeIsaacLabEnv):
+
+    # ---- 1. build it once, in __init__ ---------------------------------
+    def _init_tactile_reward(self):
+        self._tactile_reward_model = None
+        rew_cfg = self.cfg.tactile_reward          # a TactileRewardCfg field
+        if not rew_cfg.ckpt.strip():
+            return                                  # feature disabled, no cost
+
+        self._tactile_reward_model = TactileRewardModel.from_cfg(
+            rew_cfg,
+            num_envs=self.num_envs,
+            device=self.device,
+            max_episode_length=self.max_episode_length,
+            default_instruction="pick up the gear and mesh it onto the shaft",
+        )
+        if self._tactile_reward_model is None:
+            return                                  # ckpt empty / ReWiND missing
+
+        # reward shaping stays HERE, not in the model
+        self._scale = float(rew_cfg.scale)
+
+    # ---- 2. per step: build the frame, scale the progress --------------
+    def _compute_tactile_reward(self) -> torch.Tensor:
+        if self._tactile_reward_model is None:
+            return torch.zeros(self.num_envs, device=self.device)
+
+        left  = self.scene.sensors["left_tactile_sensor"]
+        right = self.scene.sensors["right_tactile_sensor"]
+        rows, cols = left.cfg.tactile_array_size                    # (20, 25)
+
+        def pad(sensor):                            # -> (N, 20, 25, 3)
+            normal = sensor.data.tactile_normal_force.view(self.num_envs, rows, cols, 1)
+            shear  = sensor.data.tactile_shear_force.view(self.num_envs, rows, cols, 2)
+            return torch.cat([normal, shear], dim=-1)   # (normal, shear_x, shear_y)
+
+        # stack the two pads on the ROW axis -> (N, 40, 25, 3)
+        frame = torch.cat([pad(left), pad(right)], dim=1).float()
+
+        progress = self._tactile_reward_model.compute(frame)        # (N,) in [0, 1]
+        return progress * self._scale
+
+    # ---- 3. clear per-env history on episode reset ---------------------
+    def _reset_idx(self, env_ids):
+        super()._reset_idx(env_ids)
+        if self._tactile_reward_model is not None:
+            self._tactile_reward_model.reset_idx(env_ids)
+```
+
+Then add the reward wherever your env sums its terms — for a direct-workflow env
+that is the reward dict:
+
+```python
+rew_dict["tactile_progress"] = self._compute_tactile_reward()
+rew_scales["tactile_progress"] = 1.0        # scale already applied above
+```
+
+and for a manager-based env, a `RewTerm` that calls into the env:
+
+```python
+rewind_tactile_reward = RewTerm(func=mdp.rewind_tactile_reward, weight=1.0)
+```
+
+Three things this sketch is deliberate about:
+
+- **`_reset_idx` is not optional.** Skip it and a new episode inherits the
+  previous one's rolling history and EMA state, which biases early-episode
+  reward upward and quietly ruins the first ~`history` steps of every episode.
+- **Scaling happens in the env**, after `compute()`. The model returns raw
+  progress so one checkpoint can back several reward formulations.
+- **Both `from_cfg` returning `None` and an empty `ckpt` are normal**, not
+  errors — they are the "reward disabled" path, and every call site has to
+  tolerate it.
 
 ## The frame contract
 

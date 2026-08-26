@@ -1,15 +1,15 @@
 #!/bin/bash
 # Gear pickplace data collection — curriculum sweep: roll out each baselineA
 # snapshot (worst→best) in single_pos so tactile/RGB variation across the
-# dataset comes purely from policy-skill progression. RGB saved (tactile
-# sensors off). Output: $BASE_SAVE_DIR/<ep_label>/ep*.npy
+# dataset comes purely from policy-skill progression.
+# Output: $BASE_SAVE_DIR/<ep_label>/ep*.npy
 set -e
 source "$(dirname "$0")/_common.sh"
 
 # Training checkpoint
 CKPTS_DIR=/mnt/home/uber/tactile_isaaclab/logs/rl_games/ForgeGearPickPlace/GearMesh_PickPlace_baselineA/nn
 # Directory to save
-BASE_SAVE_DIR=/mnt/tank/tactile/tactile_dataset/gearpickplace_curriculum_rgb
+BASE_SAVE_DIR=tactile_dataset/gearpickplace_tactile
 
 # Ep list spanning the gear baselineA skill curve (0% → ~79% at ep_740).
 TARGET_EPS=(20 100 260 340 420 500 580 660 740)
@@ -34,12 +34,10 @@ for ckpt_name in "${CKPTS[@]}"; do
     mkdir -p "$save_dir"
     echo "==== [$label] ckpt=$ckpt_name → $save_dir  (max_epochs=$max_iters_abs) ===="
 
-    FORGE_SKIP_TACTILE_SENSORS=1 \
-    FORGE_ENABLE_FRONT_CAM=1 \
     FORGE_DISABLE_YAW_DIFF_OBS=1 \
     ./isaaclab.sh -p "$TRAIN" \
     "env.tactile_save.all_envs=true" \
-    "env.tactile_save.camera=true" \
+    "env.tactile_save.force_field=true" \
     "env.tactile_save.episodes_per_env=1" \
     "env.tactile_save.save_dir=$save_dir" \
         --task Isaac-Forge-GearMesh-PickPlace-Direct-v0 \
